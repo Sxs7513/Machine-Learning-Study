@@ -22,8 +22,8 @@ class MaxPooling(object):
                         # 记录最大值位置,在最大值位置处填充1,用于反向传播
                         # 原因看 https://www.jianshu.com/p/6928203bf75b
                         index = np.argmax(x[b, i:i + self.ksize, j:j + self.ksize, c])
-                        # 最大值位置直接为 1, 方便乘以梯度,这块没明白为什么这样做,但是结果看来,竟然还是对的..
+                        # 最大值位置直接为 1, 方便乘以梯度,
                         # index / self.stride 永远为 0, index % self.stride 在 index 为 1 的时候为 1
-                        # 暂时想不明白
+                        # 这是因为 np.argmax 给出的位置问题,自己打 log 就知道了
                         self.index[b, i + int(index / self.stride), j + index % self.stride, c] = 1
 
