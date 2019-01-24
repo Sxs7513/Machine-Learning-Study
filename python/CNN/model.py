@@ -8,7 +8,7 @@ from layers.softmax import Softmax
 
 import time
 
-def main():
+def build_model():
     images, labels = load_mnist('./data/mnist')
     test_images, test_labels = load_mnist('./data/mnist', 't10k')
     
@@ -36,7 +36,7 @@ def main():
         # train
         train_acc = 0
         train_loss = 0
-        
+
         for i in range(int(images.shape[0] / batch_size)):
             # 每个图片被重新排成 28 * 28 * 1，即 28 个28 * 1 的矩阵是一张图片
             # 为的是方便在 Conv2D 的 im2col 计算
@@ -66,13 +66,16 @@ def main():
 
             # 反向传播
             # 首先进行对各个层输入与权重(有必要的话)的求导
-            relu1.gradient(
-                pool1.gradient(
-                    conv2.gradient(
-                        relu2.gradient(
-                            pool2.gradient(
-                                fc.gradient(
-                                    sf.gradient()
+            sf.gradient()
+            conv1.gradient(
+                relu1.gradient(
+                    pool1.gradient(
+                        conv2.gradient(
+                            relu2.gradient(
+                                pool2.gradient(
+                                    fc.gradient(
+                                        sf.eta
+                                    )
                                 )
                             )
                         )
@@ -100,7 +103,7 @@ def main():
             epoch, train_acc / float(images.shape[0]), train_loss / images.shape[0]))
 
         # validation
-        for i in range(test_images.shape[0] / batch_size):
+        for i in range(int(test_images.shape[0] / batch_size)):
             img = test_images[i * batch_size:(i + 1) * batch_size].reshape([batch_size, 28, 28, 1])
             label = test_labels[i * batch_size:(i + 1) * batch_size]
             conv1_out = relu1.forward(conv1.forward(img))
@@ -117,6 +120,16 @@ def main():
         print (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + "  epoch: %5d , val_acc: %.4f  avg_val_loss: %.4f" % (
             epoch, val_acc / float(test_images.shape[0]), val_loss / test_images.shape[0]))
 
-    return
-    
-main()
+    def predict(img):
+        img = test_images[0]
+        img = np.array([img]).reshape([1, 28, 28, 1])
+        conv1_out = relu1.forward(conv1.forward(img))
+        pool1_out = pool1.forward(conv1_out)
+        conv2_out = relu2.forward(conv2.forward(pool1_out))
+        pool2_out = pool2.forward(conv2_out)
+        fc_out = fc.forward(pool2_out)
+        val_loss += sf.cal_loss(fc_out, np.array(label))
+        print(np.argmax(sf.softmax))
+        return np.argmax(sf.softmax)
+
+    return predict

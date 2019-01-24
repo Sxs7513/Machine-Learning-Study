@@ -53,7 +53,7 @@ class Conv2D(object):
         conv_out = np.zeros(self.eta.shape)
 
         # just for test. not final code
-        for i in range(0, self.batchsize):
+        for i in range(0, x.shape[0]):
             img_i = x[i][None, :]
             # 经过此步骤后，某张图片已被处理成链接里图中的 Input features
             col_image_i = im2col(img_i, self.ksize, self.stride)

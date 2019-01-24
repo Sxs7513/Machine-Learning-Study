@@ -20,7 +20,7 @@ class FullyConnect(object):
 
     def forward(self, x):
         # 将每个图片打平, 方便进行全连接
-        self.x = x.reshape([self.batchsize, -1])
+        self.x = x.reshape([x.shape[0], -1])
         output = np.dot(self.x, self.weights) + self.bias
 
         return output
