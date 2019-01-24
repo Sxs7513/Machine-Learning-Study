@@ -27,3 +27,9 @@ class MaxPooling(object):
                         # 这是因为 np.argmax 给出的位置问题,自己打 log 就知道了
                         self.index[b, i + int(index / self.stride), j + index % self.stride, c] = 1
 
+        return out
+
+    def gradient(self, eta):
+        # repeat 需要两次, 因为 repeat 只能同时操作一个 axis
+        return np.repeat(np.repeat(eta, self.stride, axis=1), self.stride, axis=2) * self.index
+

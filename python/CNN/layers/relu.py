@@ -9,3 +9,9 @@ class Relu(object):
     def forward(self, x):
         self.x = x
         return np.maximum(0, x)
+
+    def gradient(self, eta):
+        self.eta = eta
+        self.eta[self.x<0] = 0
+
+        return self.eta
