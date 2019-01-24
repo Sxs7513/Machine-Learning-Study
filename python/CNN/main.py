@@ -29,6 +29,13 @@ def main():
 
         batch_loss = 0
         batch_acc = 0
+
+        val_acc = 0
+        val_loss = 0
+
+        # train
+        train_acc = 0
+        train_loss = 0
         
         for i in range(int(images.shape[0] / batch_size)):
             # 每个图片被重新排成 28 * 28 * 1，即 28 个28 * 1 的矩阵是一张图片
