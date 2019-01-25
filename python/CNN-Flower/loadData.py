@@ -1,8 +1,11 @@
 import tensorflow as tf
 
 import os
+import urllib
 
 url = "http://download.tensorflow.org/example_images/flower_photos.tgz"
+
+filename = ''
 
 def maybe_download(filename, work_directory):
   """Download the data from Yann's website, unless it's already here."""
