@@ -7,10 +7,12 @@ from layers.fc import FullyConnect
 from layers.softmax import Softmax
 
 import time
+import pickle
 
 def build_model():
     images, labels = load_mnist('./data/mnist')
     test_images, test_labels = load_mnist('./data/mnist', 't10k')
+    testImg = test_images[0]
     
     batch_size = 64
     # 初始化各个层, 主要是确定它们的大小
@@ -59,7 +61,7 @@ def build_model():
             fc_out = fc.forward(pool2_out)
             
             # 计算误差,正确率等
-            batch_loss += sf.cal_loss(fc_out, label)
+            batch_loss += sf.cal_loss(fc_out, np.array(label))
             for j in range(batch_size):
                 if (np.argmax(sf.softmax[j]) == label[j]):
                     batch_acc += 1
@@ -83,10 +85,13 @@ def build_model():
                 )
             )
 
-            # 然后更新权重
-            fc.backward(alpha=learning_rate, weight_decay=0.0004)
-            conv2.backward(alpha=learning_rate, weight_decay=0.0004)
-            conv1.backward(alpha=learning_rate, weight_decay=0.0004)
+
+            if i % 1 == 0:
+                # 然后更新权重
+                fc.backward(alpha=learning_rate, weight_decay=0.0004)
+                conv2.backward(alpha=learning_rate, weight_decay=0.0004)
+                conv1.backward(alpha=learning_rate, weight_decay=0.0004)
+
             
             if i % 50 == 0:
                 print (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + \
@@ -120,16 +125,47 @@ def build_model():
         print (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + "  epoch: %5d , val_acc: %.4f  avg_val_loss: %.4f" % (
             epoch, val_acc / float(test_images.shape[0]), val_loss / test_images.shape[0]))
 
-    def predict(img):
-        img = test_images[0]
-        img = np.array([img]).reshape([1, 28, 28, 1])
-        conv1_out = relu1.forward(conv1.forward(img))
-        pool1_out = pool1.forward(conv1_out)
-        conv2_out = relu2.forward(conv2.forward(pool1_out))
-        pool2_out = pool2.forward(conv2_out)
-        fc_out = fc.forward(pool2_out)
-        val_loss += sf.cal_loss(fc_out, np.array(label))
-        print(np.argmax(sf.softmax))
-        return np.argmax(sf.softmax)
+    def save_model():
+        weight1 = conv1.weights
+        weight2 = conv2.weights
+        weight3 = fc.weights
 
-    return predict
+        models = {
+            "conv1": conv1,
+            "conv2": conv2,
+            "relu1": relu1,
+            "relu2": relu2,
+            "pool1": pool1,
+            "pool2": pool2,
+            "fc": fc,
+            "sf": sf,
+            "testImg": testImg
+        }
+
+        output = open('./data/model/index.pkl', 'wb')
+        
+        pickle.dump(models, output)
+
+        output.close()
+
+        np.save('./data/model/weight1.npy', weight1)
+        np.save('./data/model/weight2.npy', weight2)
+        np.save('./data/model/weight3.npy', weight3)
+
+    save_model()
+
+    return (conv1, conv2, pool1, pool2, fc, sf, relu1, relu2, testImg)
+
+def predict(model):
+    conv1, conv2, pool1, pool2, fc, sf, relu1, relu2, testImg = model
+
+    img = testImg
+    img = np.array([img]).reshape([1, 28, 28, 1])
+    conv1_out = relu1.forward(conv1.forward(img))
+    pool1_out = pool1.forward(conv1_out)
+    conv2_out = relu2.forward(conv2.forward(pool1_out))
+    pool2_out = pool2.forward(conv2_out)
+    fc_out = fc.forward(pool2_out)
+    sf.predict(fc_out)
+    print(np.argmax(sf.softmax))
+    return np.argmax(sf.softmax)

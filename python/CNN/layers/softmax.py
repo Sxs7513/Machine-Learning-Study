@@ -20,13 +20,15 @@ class Softmax(object):
     def predict(self, prediction):
         exp_prediction = np.zeros(prediction.shape)
         self.softmax = np.zeros(prediction.shape)
-        for i in range(0, self.batchsize):
+
+        for i in range(0, prediction.shape[0]):
             prediction[i, :] -= np.max(prediction[i, :])
             exp_prediction[i] = np.exp(prediction[i])
             self.softmax[i] = exp_prediction[i] / np.sum(exp_prediction[i])
 
         return self.softmax
 
+    # softmax 导数不必多说
     def gradient(self):
         self.eta = self.softmax.copy()
         for i in range(self.batchsize):

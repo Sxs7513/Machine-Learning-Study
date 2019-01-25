@@ -26,7 +26,7 @@ class FullyConnect(object):
         return output
 
     def gradient(self, eta):
-        for i in range(0, self.batchsize):
+        for i in range(eta.shape[0]):
             col_x = self.x[i][:, None]
             eta_i = eta[i][:, None].T
             # 对权重求导较为简单,没啥可说

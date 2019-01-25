@@ -14,7 +14,7 @@ def main():
     X_test = tb[0]
     
     dims = [784, 100, 80, 50, 10]
-    DL.model_DL(train_x.T, train_y.T, Y, X_test.T, Y_test, dims, alpha=0.5, num_iterations=1100, print_cost=True)
+    DL.model_DL(train_x.T, train_y.T, Y, X_test.T, Y_test, dims, alpha=0.3, num_iterations=2000, print_cost=True)
 
     return
 

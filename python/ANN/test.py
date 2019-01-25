@@ -59,7 +59,7 @@ def calculate_loss(model):
     # 计算误差
     correct_logprobs = -np.log(probs[range(num_examples), y])
     data_loss = np.sum(correct_logprobs)
-    # 可选项,加上回归项
+    # 可选项,加上正则项防止过拟合
     data_loss += reg_lambda/2 * (np.sum(np.square(W1)) + np.sum(np.square(W2)))
 
     return 1. / num_examples * data_loss
