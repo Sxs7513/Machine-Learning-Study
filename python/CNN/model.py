@@ -156,10 +156,9 @@ def build_model():
 
     return (conv1, conv2, pool1, pool2, fc, sf, relu1, relu2, testImg)
 
-def predict(model):
+def predict(model, img):
     conv1, conv2, pool1, pool2, fc, sf, relu1, relu2, testImg = model
 
-    img = testImg
     img = np.array([img]).reshape([1, 28, 28, 1])
     conv1_out = relu1.forward(conv1.forward(img))
     pool1_out = pool1.forward(conv1_out)
