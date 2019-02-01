@@ -66,12 +66,37 @@ class SVM(object):
 
         return Ek
 
+    def updateEk(self, k):
+        Ek = self.computeEk(k)
+        self.E[k] = [1, Ek]
+
     # 内循环，根据 i 选择 j
     def selectJ(self, i, Ei):
         # 更新误差缓存
         self.E[i] = [1, Ei]
         # 获取已经缓存的 j
         validE = np.zeros(self.E[:, 0])[0]
+
+        if (len(validE) > 1):
+            j = 0
+            maxDelta = 0
+            Ej = 0
+            
+            # 寻找最大的 |Ei-Ej|
+            for k in validE:
+                if (k == i): continue
+                Ek = self.computeEk(k)
+                if (abs(Ei - Ek) > maxDelta):
+                    j = k
+                    maxDelta = abs(Ei - Ek)
+                    Ej = Ek
+        else:
+            j = i
+            while (j == i):
+                j = int(np.random.uniform(0, N))
+            Ej = self.computeEk(j)
+        
+        return j, Ej
 
     def inner(self, i):
         Ei = self.computeEk(i)
@@ -82,7 +107,45 @@ class SVM(object):
             or
             (self.Y[i] * Ei < -self.epsilon and float(self.alpha[i]) < self.C)
         ):
+            j, Ej = self.selectJ(i, Ei)
+            alphaI = float(self.alpha[i])
+            alphaJ = float(self.alpha[j])
+
+            # 两种情况下 L 与 H 
+            if (self.Y[i] !== self.Y[j]):
+                L = max(0, alphaJ - alphaI)
+                H = min(self.C, self.C + alphaJ - alphaI)
+            else:
+                L = max(0, alphaJ + alphaI - self.C)
+                H = min(self.C, alphaJ + alphaI)
+
+            if (L == H): return 0
             
+            xi = np.array([self.X[i]])
+            xj = np.array([self.X[j]])
+            # K11 + K22 − 2K12
+            eta = float(kernel(xi, xi) + kernel(xj, xj) - 2 * kernel(xi, xj))
+            if (eta <= 0): return 0
+
+            alphaJnewunc = alphaJ + self.Y[j] * (Ei - Ej) / eta
+            # 更新 alphaJ
+            if (alphaJnewunc > H): self.alpha[j] = [H]
+            elif (alphajnewunc<L): self.alpha[j]=[L]
+            else: self.alpha[j] = [alphaJnewunc]
+
+            # 更新 Ej
+            self.updateEk(j)
+            if(abs(float(self.alpha[j]) - alphajold) < 0.00001): return 0
+
+            # 更新 alphaI
+            self.alpha[i] = [alphaI + self.Y[i] * self.Y[j] * (alphaJ - float(self.alpha[j]))]
+
+            # 更新 Ei
+            self.updateEk(i)
+
+            # 更新b
+            
+
 
 
 def SMO(X, Y, C, epsilon, maxIters):
