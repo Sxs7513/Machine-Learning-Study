@@ -13,6 +13,7 @@ from tflearn.layers.estimator import regression
 import preprocessing_RCNN as prep
 import cv2
 
+from common import create_base_alexnet
 
 def load_data(datafile, num_class, save=False, save_path="dataset.pkl"):
     fr = codecs.open(datafile, "r", "utf-8")
@@ -43,22 +44,7 @@ def load_data(datafile, num_class, save=False, save_path="dataset.pkl"):
 
 # 无监督预训练
 def create_alexnet(num_classes):
-    network = input_data(shape=[None, config.IMAGE_SIZE, config.IMAGE_SIZE, 3])
-    network = conv_2d(network, 96, 11, strides=4, activation='relu')
-    network = max_pool_2d(network, 3, strides=2)
-    network = local_response_normalization(network)
-    network = conv_2d(network, 256, 5, activation='relu')
-    network = max_pool_2d(network, 3, strides=2)
-    network = local_response_normalization(network)
-    network = conv_2d(network, 384, 3, activation='relu')
-    network = conv_2d(network, 384, 3, activation='relu')
-    network = conv_2d(network, 256, 3, activation='relu')
-    network = max_pool_2d(network, 3, strides=2)
-    network = local_response_normalization(network)
-    network = fully_connected(network, 4096, activation='tanh')
-    network = dropout(network, 0.5)
-    network = fully_connected(network, 4096, activation='tanh')
-    network = dropout(network, 0.5)
+    network = create_base_alexnet()
     network = fully_connected(network, num_classes, activation='softmax')
     network = regression(
         network,
@@ -80,16 +66,16 @@ def train(network, X, Y, save_model_path):
     if os.path.isfile(save_model_path + '.index'):
         model.load(save_model_path)
         print('load model')
-    # epoch 1000
+    # epoch 200, 1000 的话CPU太慢了
     model.fit(
         X,
         Y,
-        n_epoch=1000,
+        n_epoch=200,
         validation_set=0.1,
         shuffle=True,
         show_metric=True,
         batch_size=64,
-        snapshot_step=1,
+        snapshot_step=200,
         snapshot_epoch=False,
         run_id='alexnet_oxflowers17')
     model.save(save_model_path)
