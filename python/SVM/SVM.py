@@ -130,7 +130,7 @@ class SVM(object):
             alphaJnewunc = alphaJ + self.Y[j] * (Ei - Ej) / eta
             # 更新 alphaJ
             if (alphaJnewunc > H): self.alpha[j] = [H]
-            elif (alphajnewunc<L): self.alpha[j]=[L]
+            elif (alphajnewunc < L): self.alpha[j] = [L]
             else: self.alpha[j] = [alphaJnewunc]
 
             # 更新 Ej
@@ -144,7 +144,11 @@ class SVM(object):
             self.updateEk(i)
 
             # 更新b
+            bi = - Ei - self.Y[i] * float(kernel(xi, xi)) * (float(self.alpha[i]) - alphaI) -\
+                self.Y[j] * float(kernel(xj, xi)) * (float(self.alpha[j]) - alphaJ) + self.b
             
+            bj=- Ej - self.Y[i] * float(kernel(xi, xj)) * (float(self.alpha[i]) - alphaI) -\
+                self.Y[j] * float(kernel(xj, xj)) * (float(self.alpha[j]) - alphaJ) + self.b
 
 
 
