@@ -36,7 +36,7 @@ def kernel(xi, xj):
 
     for l in range(M):
         A = np.array([xi[l]]) - xj
-        K[l] = [np.exp(-0.5 * float(A.dot(A.T)) / (sigma**2))]
+        K[l] = [np.exp(-0.5 * float(A.dot(A.T)) / (sigma ** 2))]
 
     return K
 
@@ -198,11 +198,13 @@ class SVM(object):
         X2 = np.arange(-50, 50, 0.1)
         x1, x2 = np.meshgrid(X1, X2)
         g = self.b
+        
         for i in range(len(nonZeroAlpha)):
             # g += nonZeroAlpha[i] * y[i] * (x1 * supportVector[i][0] + x2 * supportVector[i][1])
+            
             g += nonZeroAlpha[i] * y[i] * np.exp(-0.5 * (
                 (x1 - supportVector[i][0]) ** 2 +
-                (x2 - supportVector[i][1]) ** 2) / (sigma**2))
+                (x2 - supportVector[i][1]) ** 2) / (sigma ** 2))
 
         # 画出超平面
         plt.contour(x1, x2, g, 0, colors='b')

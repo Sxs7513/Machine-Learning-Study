@@ -25,7 +25,7 @@ def show_rect(img_path, regions):
     fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(6, 6))
     img = skimage.io.imread(img_path)
     ax.imshow(img)
-    
+    print(regions)
     for x, y, w, h in regions:
         rect = mpatche.Rectangle(
             (x, y), w, h,
