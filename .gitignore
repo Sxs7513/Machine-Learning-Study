@@ -1,2 +1,9 @@
-# Data
+
 python/CNN-Flower/data
+python/R-CNN/data_set
+python/R-CNN/output
+python/R-CNN/fine_tune_model
+python/R-CNN/output_RCNN
+python/R-CNN/pre_train_model
+python/R-CNN/svm_train/1/
+python/R-CNN/svm_train/2/

@@ -58,13 +58,14 @@ def image_proposal(img_path):
 
 def generate_single_svm_train(train_file):
     save_path = train_file.rsplit(".", 1)[0].strip()
-    if len(os.listdir(save_path)) == 0:
+    if (len(os.listdir(save_path)) == 0):
         print("reading %s's svm dataset" % train_file.split('\\')[-1])
         prep.load_train_proposals(train_file, 2, save_path, threshold=0.3, is_svm=True, save=True)
     print("restoring svm dataset")
     images, labels = prep.load_from_npy(save_path)
 
     return images, labels
+
 
 def train_svms(train_file_folder, model):
     files = os.listdir(train_file_folder)
@@ -77,6 +78,7 @@ def train_svms(train_file_folder, model):
 
             for ind, i in enumerate(X):
                 feats = model.predict([i])
+                # 把特征向量取出来
                 train_features.append(feats[0])
                 tools.view_bar("extract features of %s" % train_file, ind + 1, len(X))
             print(' ')
@@ -88,17 +90,19 @@ def train_svms(train_file_folder, model):
             # 分类器针对框是否合规进行分类 
             clf = svm.LinearSVC()
             print("fit svm")
+
             clf.fit(train_features, Y)
             svms.append(clf)
             joblib.dump(clf, os.path.join(train_file_folder, str(train_file.split('.')[0]) + '_svm.pkl'))
 
     return svms
+    
 
 if __name__ == "__main__":
     train_file_folder = config.TRAIN_SVM
-    img_path = './17flowers/jpg/7/image_0591.jpg'
+    img_path = './17flowers/jpg/7/image_0561.jpg'
     imgs, verts = image_proposal(img_path)
-    tools.show_rect(img_path, verts)
+    # tools.show_rect(img_path, verts)
 
     # 复用 fine_tune_RNN 模型除了全连接层的其他所有层
     net = create_base_alexnet()
@@ -127,7 +131,7 @@ if __name__ == "__main__":
         for svm in svms:
             pred = svm.predict([f.tolist()])
             # not background
-            if pred[0] != 0
+            if pred[0] != 0:
                 results.append(verts[count])
                 results_label.append(pred[0])
         count += 1

@@ -53,14 +53,15 @@ def fine_tune_Alexnet(network, X, Y, save_model_path, fine_tune_model_path):
     model.fit(
         X,
         Y,
-        n_epoch=200,
+        n_epoch=10,
         validation_set=0.1,
         shuffle=True,
         show_metric=True,
         batch_size=64,
         snapshot_step=200,
         snapshot_epoch=False,
-        run_id='alexnet_rcnnflowers2')
+        run_id='alexnet_rcnnflowers2'
+    )
     
     model.save(fine_tune_model_path)
 

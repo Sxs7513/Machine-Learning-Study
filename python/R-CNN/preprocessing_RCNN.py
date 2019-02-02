@@ -64,7 +64,10 @@ def load_train_proposals(datafile, num_class, save_path, threshold=0.5, is_svm=F
             # labels, let 0 represent default class, which is background
             index = int(tmp[1])
             if is_svm:
-                pass
+                if iou_val < threshold:
+                    labels.append(0)
+                else:
+                    labels.append(index)
             else:
                 label = np.zeros(num_class + 1)
                 if iou_val < threshold:
@@ -73,6 +76,7 @@ def load_train_proposals(datafile, num_class, save_path, threshold=0.5, is_svm=F
                     label[index] = 1
                 labels.append(label)
         tools.view_bar("processing image of %s" % datafile.split('\\')[-1].strip(), num + 1, len(train_list))
+
         if save:
             np.save((os.path.join(save_path, tmp[0].split('/')[-1].split('.')[0].strip()) + '_data.npy'), [images, labels])   
 
@@ -136,6 +140,7 @@ def load_from_npy(data_set):
 
     for ind, d in enumerate(data_list):
         i, l = np.load(os.path.join(data_set, d))
+
         images.extend(i)
         labels.extend(l)
         tools.view_bar("load data of %s" % d, ind + 1, len(data_list))

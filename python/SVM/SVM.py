@@ -26,6 +26,8 @@ def loadDataSet():
 # def kernel(xi, xj):
 #     return xi.dot(xj.T)
 
+sigma = 10.0
+
 
 # 高斯核函数
 def kernel(xi, xj):
@@ -75,13 +77,13 @@ class SVM(object):
         # 更新误差缓存
         self.E[i] = [1, Ei]
         # 获取已经缓存的 j
-        validE = np.zeros(self.E[:, 0])[0]
+        validE = np.nonzero(self.E[:, 0])[0]
 
         if (len(validE) > 1):
             j = 0
             maxDelta = 0
             Ej = 0
-            
+
             # 寻找最大的 |Ei-Ej|
             for k in validE:
                 if (k == i): continue
@@ -93,26 +95,24 @@ class SVM(object):
         else:
             j = i
             while (j == i):
-                j = int(np.random.uniform(0, N))
+                j = int(np.random.uniform(0, self.N))
             Ej = self.computeEk(j)
-        
+
         return j, Ej
 
     def inner(self, i):
         Ei = self.computeEk(i)
 
         # 违反了 KKT 条件，加入了容错，不严格执行 KKT
-        if (
-            (self.Y[i] * Ei > self.epsilon and float(self.alpha[i] > 0))
-            or
-            (self.Y[i] * Ei < -self.epsilon and float(self.alpha[i]) < self.C)
-        ):
+        if ((self.Y[i] * Ei > self.epsilon and float(self.alpha[i] > 0))
+                or (self.Y[i] * Ei < -self.epsilon
+                    and float(self.alpha[i]) < self.C)):
             j, Ej = self.selectJ(i, Ei)
             alphaI = float(self.alpha[i])
             alphaJ = float(self.alpha[j])
 
-            # 两种情况下 L 与 H 
-            if (self.Y[i] !== self.Y[j]):
+            # 两种情况下 L 与 H
+            if (self.Y[i] != self.Y[j]):
                 L = max(0, alphaJ - alphaI)
                 H = min(self.C, self.C + alphaJ - alphaI)
             else:
@@ -120,7 +120,7 @@ class SVM(object):
                 H = min(self.C, alphaJ + alphaI)
 
             if (L == H): return 0
-            
+
             xi = np.array([self.X[i]])
             xj = np.array([self.X[j]])
             # K11 + K22 − 2K12
@@ -130,15 +130,18 @@ class SVM(object):
             alphaJnewunc = alphaJ + self.Y[j] * (Ei - Ej) / eta
             # 更新 alphaJ
             if (alphaJnewunc > H): self.alpha[j] = [H]
-            elif (alphajnewunc < L): self.alpha[j] = [L]
+            elif (alphaJnewunc < L): self.alpha[j] = [L]
             else: self.alpha[j] = [alphaJnewunc]
 
             # 更新 Ej
             self.updateEk(j)
-            if(abs(float(self.alpha[j]) - alphajold) < 0.00001): return 0
+            if (abs(float(self.alpha[j]) - alphaJ) < 0.00001): return 0
 
             # 更新 alphaI
-            self.alpha[i] = [alphaI + self.Y[i] * self.Y[j] * (alphaJ - float(self.alpha[j]))]
+            self.alpha[i] = [
+                alphaI +
+                self.Y[i] * self.Y[j] * (alphaJ - float(self.alpha[j]))
+            ]
 
             # 更新 Ei
             self.updateEk(i)
@@ -146,10 +149,65 @@ class SVM(object):
             # 更新b
             bi = - Ei - self.Y[i] * float(kernel(xi, xi)) * (float(self.alpha[i]) - alphaI) -\
                 self.Y[j] * float(kernel(xj, xi)) * (float(self.alpha[j]) - alphaJ) + self.b
-            
+
             bj=- Ej - self.Y[i] * float(kernel(xi, xj)) * (float(self.alpha[i]) - alphaI) -\
                 self.Y[j] * float(kernel(xj, xj)) * (float(self.alpha[j]) - alphaJ) + self.b
 
+            if (0 < float(self.alpha[i]) and float(self.alpha[i]) < self.C):
+                self.b = bi
+            elif (0 < float(self.alpha[j]) and float(self.alpha[j]) < self.C):
+                self.b = bj
+            else:
+                self.b = 0.5 * (bi + bj)
+
+            return 1
+        else:
+            return 0
+
+    # 寻找非边界点
+    def findNonBound(self):
+        nonbound = []
+
+        for i in range(len(self.alpha)):
+            # 该情况下必满足 KKT
+            if (0 < self.alpha[i] and self.alpha[i] < self.C):
+                nonbound.append(i)
+
+        return nonbound
+
+    def visualize(self, positive, negative):
+        plt.xlabel("X1")
+        plt.ylabel("X2")
+        plt.scatter(positive[:, 0], positive[:, 1], c='r', marker='o')
+        plt.scatter(negative[:, 0], negative[:, 1], c='g', marker='o')
+
+        # 通过非零 alpha 找到支持向量
+        nonZeroAlpha = self.alpha[np.nonzero(self.alpha)]
+        supportVector = X[np.nonzero(self.alpha)[0]]
+        y = np.array([self.Y]).T[np.nonzero(self.alpha)]
+        plt.scatter(
+            supportVector[:, 0],
+            supportVector[:, 1],
+            s=100,
+            c='y',
+            alpha=0.5,
+            marker='o')
+        print("支持向量个数:", len(nonZeroAlpha))
+
+        X1 = np.arange(-50, 50, 0.1)
+        X2 = np.arange(-50, 50, 0.1)
+        x1, x2 = np.meshgrid(X1, X2)
+        g = self.b
+        for i in range(len(nonZeroAlpha)):
+            # g += nonZeroAlpha[i] * y[i] * (x1 * supportVector[i][0] + x2 * supportVector[i][1])
+            g += nonZeroAlpha[i] * y[i] * np.exp(-0.5 * (
+                (x1 - supportVector[i][0]) ** 2 +
+                (x2 - supportVector[i][1]) ** 2) / (sigma**2))
+
+        # 画出超平面
+        plt.contour(x1, x2, g, 0, colors='b')
+        plt.title("sigma: %f" % sigma)
+        plt.show()
 
 
 def SMO(X, Y, C, epsilon, maxIters):
@@ -167,11 +225,34 @@ def SMO(X, Y, C, epsilon, maxIters):
 
             # 外层循环
             for i in range(SVMClassifier.N):
-                alpha
+                alphaPairChanges += SVMClassifier.inner(i)
+
+            # 训练集上无 alpha 变化时推出循环
+            if (alphaPairChanges == 0):
+                break
+                # 如果有变化那么遍历非边界数据
+            else:
+                iterEntire = False
+
+        # 遍历非边界数据
+        else:
+            alphaPairChanges = 0
+            nonbound = SVMClassifier.findNonBound()
+            # 外层循环
+            for i in nonbound:
+                alphaPairChanges += SVMClassifier.inner(i)
+
+            # 非边界点全满足KKT条件，则循环遍历整个样本集
+            if (alphaPairChanges == 0):
+                iterEntire = True
+
+    return SVMClassifier
 
 
 if __name__ == '__main__':
     positive, negative, dataset = loadDataSet()
     X = dataset[:, 0:2]
     Y = dataset[:, 2]
-    
+
+    SVMClassifier = SMO(X, Y, 1, 0.001, 40)
+    SVMClassifier.visualize(positive, negative)
