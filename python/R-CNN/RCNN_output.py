@@ -4,6 +4,7 @@ import numpy as np
 import selectivesearch
 import os.path
 from sklearn import svm
+from sklearn.linear_model import Ridge
 from sklearn.externals import joblib
 import preprocessing_RCNN as prep
 import os
@@ -62,24 +63,31 @@ def generate_single_svm_train(train_file):
         print("reading %s's svm dataset" % train_file.split('\\')[-1])
         prep.load_train_proposals(train_file, 2, save_path, threshold=0.3, is_svm=True, save=True)
     print("restoring svm dataset")
-    images, labels = prep.load_from_npy(save_path)
+    images, labels, boundingRects = prep.load_from_npy(save_path, needBoundingRects=True)
 
-    return images, labels
+    return images, labels, boundingRects
 
 
 def train_svms(train_file_folder, model):
     files = os.listdir(train_file_folder)
     svms = []
+    bbox_train_features = []
+    bRects = []
 
     for train_file in files:
         if train_file.split(".")[-1] == 'txt':
-            X, Y = generate_single_svm_train(os.path.join(train_file_folder, train_file))
+            X, Y, B = generate_single_svm_train(os.path.join(train_file_folder, train_file))
             train_features = []
 
             for ind, i in enumerate(X):
                 feats = model.predict([i])
                 # 把特征向量取出来
                 train_features.append(feats[0])
+
+                if (Y[ind] > 0):
+                    bbox_train_features.append(feats[0])
+                    bRects.append(R[ind])
+
                 tools.view_bar("extract features of %s" % train_file, ind + 1, len(X))
             print(' ')
             print("feature dimension")
@@ -95,7 +103,33 @@ def train_svms(train_file_folder, model):
             svms.append(clf)
             joblib.dump(clf, os.path.join(train_file_folder, str(train_file.split('.')[0]) + '_svm.pkl'))
 
+    # 保存boundingbox回归训练集
+    np.save((os.path.join(train_file_folder, 'bbox_train.npy')),
+            [bbox_train_features, rects])
+
     return svms
+
+
+def train_bbox(npy_path):
+    features, rects = np.load((os.path.join(npy_path, 'bbox_train.npy')))
+    # 不能直接np.array()，应该把元素全部取出放入空列表中。因为features和rects建立时用的append，导致其中元素结构不能直接转换成矩阵
+    X = []
+    Y = []
+    for ind, i in enumerate(features):
+        X.append(i)
+    X_train = np.array(X)
+
+    for ind, i in enumerate(rects):
+        Y.append(i)
+    Y_train = np.array(Y)
+
+    # 线性回归模型训练
+    clf = Ridge(alpha=1.0)
+    clf.fit(X_train, Y_train)
+    # 序列化，保存bbox回归
+    joblib.dump(clf, os.path.join(npy_path, 'bbox_train.pkl'))
+    return clf
+
 
 
 def nms(dets, thresh = 0.3):
@@ -135,7 +169,7 @@ def nms(dets, thresh = 0.3):
 
 if __name__ == "__main__":
     train_file_folder = config.TRAIN_SVM
-    img_path = './17flowers/jpg/7/image_0569.jpg'
+    img_path = './17flowers/jpg/7/image_0565.jpg'
     imgs, verts = image_proposal(img_path)
     # tools.show_rect(img_path, verts)
 

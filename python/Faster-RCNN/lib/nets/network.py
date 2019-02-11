@@ -16,6 +16,9 @@ class Network(object):
         self._act_summaries = []
         self._variables_to_fix = {}
 
+    def _reshape_layer(self, bottom, num_dims, name):
+        
+
     def create_architecture(self, sess, mode, num_classes, tag=None, anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
         self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])
         self._im_info = tf.placeholder(tf.float32, shape=[self._batch_size, 3])

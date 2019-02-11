@@ -62,9 +62,12 @@ class vgg16(Network):
         rpn = slim.conv2d(net, 512, [3, 3], trainable=is_training, weights_initializer=initializer, scope="rpn_conv/3x3")
 
         self._act_summaries.append(net)
+        # 用于分类背景和目标，注意 rpn 并没有显式地提取任何候选窗口，完全使用网络自身完成判断和修正
+        # 不要用 R-CNN 的 select-region 思想去想 rpn 
+        # https://zhuanlan.zhihu.com/p/30720870
         rpn_cls_score = slim.conv2d(rpn, self._num_anchors * 2, [1, 1], trainable=is_training, weights_initializer=initializer, padding='VALID', activation_fn=None, scope='rpn_cls_score')
 
-
+        
 
     def get_variables_to_restore(self, variables, var_keep_dic):
         variables_to_restore = []
