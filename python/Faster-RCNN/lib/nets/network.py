@@ -16,8 +16,30 @@ class Network(object):
         self._act_summaries = []
         self._variables_to_fix = {}
 
+    # https://github.com/endernewton/tf-faster-rcnn/issues/230 提出了同样的问题
+    # 为什么要这么费劲的进行维度变换，暂时没搞清楚
+    # 似乎看起来只是为了代码更清晰明了，经过简单测试，似乎没有发现直接 reshape 的区别
     def _reshape_layer(self, bottom, num_dims, name):
-        
+        input_shape = tf.shape(bottom)
+        with tf.variable_scope(name):
+            # 首先把 channel 拉到第二维
+            to_caffe = tf.transpose(bottom, [0, 3, 1, 2])
+            # 然后把第二维置为 2，并伸展第三维
+            reshaped = tf.reshape(to_caffe, tf.concat(axis=0, values=[[self._batch_size], [num_dims, -1], [input_shape[2]]]))
+            # 最后再将第二维放到最后
+            to_tf = tf.transpose(reshaped, [0, 2, 3, 1])
+
+            return to_tf
+
+    def _softmax_layer(self, bottom, name):
+        if name == 'rpn_cls_prob_reshape':
+            input_shape = tf.shape(bottom)
+            # 打平，只留下最后一个维度（即 2）
+            # 即等于计算每一个点提取的所有 anchor 上面所有像素的 front or back 概率
+            bottom_reshaped = tf.reshape(input_shape, [-1, input_shape[-1]])
+            reshaped_score = tf.nn.softmax(bottom_reshaped, name=name)
+            return tf.reshape(reshaped_score, input_shape)
+        return tf.nn.softmax(bottom, name)
 
     def create_architecture(self, sess, mode, num_classes, tag=None, anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
         self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])

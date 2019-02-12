@@ -23,6 +23,9 @@ class vgg16(Network):
             # Build head
             net = self.build_head(is_training)
 
+            # Build rpn
+            rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape = self.build_rpn(net, is_training, initializer)
+
         return net  
 
     def build_head(self, is_training):
@@ -67,7 +70,15 @@ class vgg16(Network):
         # https://zhuanlan.zhihu.com/p/30720870
         rpn_cls_score = slim.conv2d(rpn, self._num_anchors * 2, [1, 1], trainable=is_training, weights_initializer=initializer, padding='VALID', activation_fn=None, scope='rpn_cls_score')
 
-        
+        # 当前的 shape 是 [N, H, W, C]，C 为 self._num_anchors * 2, 需要配合 softmax 二分类转换为 [N, 2, H, W]
+        rpn_cls_score_reshape = self._reshape_layer(rpn_cls_score, 2, 'rpn_cls_score_reshape')
+        rpn_cls_prob_reshape = self._softmax_layer(rpn_cls_score_reshape, 'rpn_cls_prob_reshape')
+        # softmax 预测完后还原回 rpn_cls_score 的 shape
+        rpn_cls_prob = self._reshape_layer(rpn_cls_prob_reshape, self._num_anchors * 2, 'rpn_cls_prob')
+        # bounding regression 回归层
+        rpn_bbox_pred = slim.conv2d(rpn, self._num_anchors * 4, [1, 1], trainable=is_training, weights_initializer=initializer, padding='VALID', activation_fn=None, scope='rpn_bbox_pred')
+
+        return rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape
 
     def get_variables_to_restore(self, variables, var_keep_dic):
         variables_to_restore = []
