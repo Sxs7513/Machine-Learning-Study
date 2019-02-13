@@ -8,9 +8,12 @@ import tensorflow.contrib.slim as slim
 from tensorflow.contrib.slim import arg_scope
 
 from lib.config import config as cfg
+from lib.layer_utils.snippets import generate_anchors_pre
 
 class Network(object):
     def __init__(self, batch_size=1):
+        # vgg16 模型总共有4个池化层，到 rpn 的时候相比原图缩小16倍
+        self._feat_stride = [16, ]
         self._batch_size = batch_size
         self._layers = {}
         self._act_summaries = []
@@ -36,7 +39,7 @@ class Network(object):
             input_shape = tf.shape(bottom)
             # 打平，只留下最后一个维度（即 2）
             # 即等于计算每一个点提取的所有 anchor 上面所有像素的 front or back 概率
-            bottom_reshaped = tf.reshape(input_shape, [-1, input_shape[-1]])
+            bottom_reshaped = tf.reshape(bottom, [-1, input_shape[-1]])
             reshaped_score = tf.nn.softmax(bottom_reshaped, name=name)
             return tf.reshape(reshaped_score, input_shape)
         return tf.nn.softmax(bottom, name)
@@ -85,6 +88,12 @@ class Network(object):
             # just to get the shape right
             height = tf.to_int32(tf.ceil(self._im_info[0, 0] / np.float32(self._feat_stride[0])))
             width = tf.to_int32(tf.ceil(self._im_info[0, 1] / np.float32(self._feat_stride[0])))
+            anchors, anchors_length = tf.py_func(
+                generate_anchors_pre,
+                [height, width, self._feat_stride, self._anchor_scales, self._anchor_ratios],
+                [tf.float32, tf.int32], name="generate_anchors"
+            )
+
 
     def build_network(self, sess, training):
         raise NotImplementedError

@@ -52,7 +52,7 @@ def generate_anchors(base_size=16, ratios=[0.5, 1, 2],
     return anchors
 
 
-# 将输入的anchor的四个坐标值转化成（宽，高，中心点横坐标，中心点纵坐标）的形式
+# 将输入的 anchor 的四个坐标值转化成（宽，高，中心点横坐标，中心点纵坐标）的形式
 def _whctrs(anchor):
     """
     Return width, height, x center, and y center for an anchor (window).

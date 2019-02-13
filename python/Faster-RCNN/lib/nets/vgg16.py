@@ -26,7 +26,7 @@ class vgg16(Network):
             # Build rpn
             rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape = self.build_rpn(net, is_training, initializer)
 
-        return net  
+        return rpn_cls_prob  
 
     def build_head(self, is_training):
         

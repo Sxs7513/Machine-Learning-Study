@@ -83,10 +83,10 @@ class Train:
         # blob
 
         # just for test
-        # blobs = self.data_layer.forward()
-        # result = sess.run(layers, feed_dict={self.net._image: blobs["data"]})
-        # print(result)
-        # print(result.shape)
+        blobs = self.data_layer.forward()
+        result = sess.run(layers, feed_dict={self.net._image: blobs["data"]})
+        print(result)
+        print(result.shape)
 
     def get_variables_in_checkpoint_file(self, file_name):
         try:
