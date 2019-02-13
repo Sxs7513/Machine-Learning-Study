@@ -26,6 +26,8 @@ class vgg16(Network):
             # Build rpn
             rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape = self.build_rpn(net, is_training, initializer)
 
+            self.build_proposals(is_training, rpn_cls_prob, rpn_bbox_pred, rpn_cls_score)
+
         return rpn_cls_prob  
 
     def build_head(self, is_training):
@@ -79,6 +81,9 @@ class vgg16(Network):
         rpn_bbox_pred = slim.conv2d(rpn, self._num_anchors * 4, [1, 1], trainable=is_training, weights_initializer=initializer, padding='VALID', activation_fn=None, scope='rpn_bbox_pred')
 
         return rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape
+
+    def build_proposals(self, is_training, rpn_cls_prob, rpn_bbox_pred, rpn_cls_score):
+        
 
     def get_variables_to_restore(self, variables, var_keep_dic):
         variables_to_restore = []

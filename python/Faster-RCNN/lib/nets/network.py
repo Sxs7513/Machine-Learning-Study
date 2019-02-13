@@ -44,6 +44,10 @@ class Network(object):
             return tf.reshape(reshaped_score, input_shape)
         return tf.nn.softmax(bottom, name)
 
+    def _proposal_layer(self, rpn_cls_prob, rpn_bbox_pred, name):
+        with tf.variable_scope(name):
+            
+
     def create_architecture(self, sess, mode, num_classes, tag=None, anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
         self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])
         self._im_info = tf.placeholder(tf.float32, shape=[self._batch_size, 3])
@@ -94,6 +98,10 @@ class Network(object):
                 [tf.float32, tf.int32], name="generate_anchors"
             )
 
+            anchors.set_shape([None, 4])
+            anchor_length.set_shape([])
+            self._anchors = anchors
+            self._anchor_length = anchor_length
 
     def build_network(self, sess, training):
         raise NotImplementedError
