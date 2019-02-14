@@ -48,8 +48,19 @@ tf.app.flags.DEFINE_integer('rpn_train_pre_nms_top_n', 12000, "Number of top sco
 tf.app.flags.DEFINE_integer('rpn_train_post_nms_top_n', 2000, "Number of top scoring boxes to keep before apply NMS to RPN proposals")
 tf.app.flags.DEFINE_integer('rpn_test_pre_nms_top_n', 6000, "Number of top scoring boxes to keep before apply NMS to RPN proposals")
 tf.app.flags.DEFINE_integer('rpn_test_post_nms_top_n', 300, "Number of top scoring boxes to keep before apply NMS to RPN proposals")
+tf.app.flags.DEFINE_integer('rpn_positive_weight', -1,
+                            'Give the positive RPN examples weight of p * 1 / {num positives} and give negatives a weight of (1 - p).'
+                            'Set to -1.0 to use uniform example weighting')
 
 tf.app.flags.DEFINE_boolean('rpn_clobber_positives', False, "If an anchor satisfied by positive and negative conditions set to negative")
+
+###########################
+# Bounding Box Parameters #
+###########################
+
+FLAGS2["bbox_inside_weights"] = (1.0, 1.0, 1.0, 1.0)
+FLAGS2["bbox_normalize_means"] = (0.0, 0.0, 0.0, 0.0)
+FLAGS2["bbox_normalize_stds"] = (0.1, 0.1, 0.1, 0.1)
 
 ######################
 # Dataset Parameters #

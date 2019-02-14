@@ -45,6 +45,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
         np.ascontiguousarray(anchors, dtype=np.float),
         np.ascontiguousarray(gt_boxes, dtype=np.float)
     )
+    # 每个 anchor 最接近哪个 gt-box
     argmax_overlaps = overlaps.argmax(axis=1)
     # 提取每一行最大重叠率
     max_overlaps = overlaps[np.arange(len(inds_inside)), argmax_overlaps]
@@ -66,6 +67,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     # 打上前景标签2：满足重叠率的检测结果打上foreground标签
     labels[max_overlaps >= cfg.FLAGS.rpn_positive_overlap] = 1
 
+    # 打上背景标签
     if cfg.FLAGS.rpn_clobber_positives:
         # assign bg labels last so that negative labels can clobber positives
         labels[max_overlaps < cfg.FLAGS.rpn_negative_overlap] = 0
@@ -86,3 +88,41 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     if len(bg_inds) > num_bg:
         disable_inds = npr.choice(bg_inds, size=(len(bg_inds) - num_bg), replace=False)
         labels[disable_inds] = -1
+
+    # 计算 bounding-regression, 注意是 anchor 与其最接近的 gt-box
+    bbox_targets = _compute_targets(anchors, gt_boxes[argmax_overlaps, :])
+
+    bbox_inside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
+    # only the positive ones have regression targets
+    bbox_inside_weights[labels == 1, :] = np.array(cfg.FLAGS2["bbox_inside_weights"])
+
+    bbox_outside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
+    if cfg.FLAGS.rpn_positive_weight < 0:
+        num_examples = np.sum(labels == 1)
+        positive_weights = np.ones((1, 4)) * 1.0 / num_examples
+        negative_weights = np.ones((1, 4)) * 1.0 / num_examples
+    bbox_outside_weights[labels == 1, :] = positive_weights
+    bbox_outside_weights[labels == 0, :] = negative_weights
+
+    labels = _unmap(labels, total_anchors, inds_inside, fill=-1)
+
+
+    def _compute_targets(ex_rois, gt_rois):
+
+        assert ex_rois.shape[0] == gt_rois.shape[0]
+        assert ex_rois.shape[1] == 4
+        assert gt_rois.shape[1] == 5
+
+        return bbox_transform(ex_rois, gt_rois[:, :4]).astype(np.float32, copy=False)
+
+    
+    def unmap(data, count, inds, fill=0):
+        if len(data.shape) == 1:
+            ret = np.empty((count, ), dtype=np.float32)
+            ret.fill(fill)
+            ret[inds] = data
+        else:
+            ret = np.empty((count,) + data.shape[1:], dtype=np.float32)
+            ret.fill(fill)
+            ret[inds, :] = data
+        return ret
