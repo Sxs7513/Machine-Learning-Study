@@ -87,6 +87,8 @@ class Train:
         result = sess.run(layers, feed_dict={self.net._image: blobs["data"]})
         print(result)
         print(result.shape)
+        # print(np.sum(result.reshape([-1, result.shape[-1]])[0]))
+        
 
     def get_variables_in_checkpoint_file(self, file_name):
         try:
