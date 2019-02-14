@@ -9,6 +9,7 @@ from tensorflow.contrib.slim import arg_scope
 
 from lib.config import config as cfg
 from lib.layer_utils.snippets import generate_anchors_pre
+from lib.layer_utils.proposal_layer import proposal_layer
 
 class Network(object):
     def __init__(self, batch_size=1):
@@ -43,6 +44,20 @@ class Network(object):
             reshaped_score = tf.nn.softmax(bottom_reshaped, name=name)
             return tf.reshape(reshaped_score, input_shape)
         return tf.nn.softmax(bottom, name)
+
+    def _proposal_layer(self, rpn_cls_prob, rpn_bbox_pred, name):
+        with tf.variable_scope(name):
+            rois, rpn_scores = tf.py_func(
+                proposal_layer,
+                [rpn_cls_prob, rpn_bbox_pred, self._im_info, self._mode, self._feat_stride, self._anchors, self._num_anchors],
+                [tf.float32, tf.float32]
+            )
+
+            # 5 的原因具体看 proposal_layer 最后
+            rois.set_shape([None, 5])
+            rpn_scores.set_shape([None, 1])
+
+        return rois, rpn_scores
 
     def create_architecture(self, sess, mode, num_classes, tag=None, anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
         self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])
@@ -94,6 +109,10 @@ class Network(object):
                 [tf.float32, tf.int32], name="generate_anchors"
             )
 
+            anchors.set_shape([None, 4])
+            anchor_length.set_shape([])
+            self._anchors = anchors
+            self._anchor_length = anchor_length
 
     def build_network(self, sess, training):
         raise NotImplementedError

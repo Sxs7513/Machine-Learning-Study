@@ -34,4 +34,6 @@ def generate_anchors_pre(height, width, feat_stride, anchor_scales=(8, 16, 32), 
     return anchors, length
 
 if __name__ == '__main__':
-    generate_anchors_pre(50, 50, 16)
+    anchors, length = generate_anchors_pre(50, 50, 16)
+    print(anchors)
+    print(anchors.shape)
