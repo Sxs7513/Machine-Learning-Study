@@ -25,8 +25,15 @@ class vgg16(Network):
 
             # Build rpn
             rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape = self.build_rpn(net, is_training, initializer)
-
+            
             self.build_proposals(is_training, rpn_cls_prob, rpn_bbox_pred, rpn_cls_score)
+
+            self._predictions["rpn_cls_score"] = rpn_cls_score
+            self._predictions["rpn_cls_score_reshape"] = rpn_cls_score_reshape
+            self._predictions["rpn_cls_prob"] = rpn_cls_prob
+            self._predictions["rpn_bbox_pred"] = rpn_bbox_pred
+
+            self._score_summaries.update(self._predictions)
 
         return rpn_cls_prob  
 
@@ -72,7 +79,7 @@ class vgg16(Network):
         # https://zhuanlan.zhihu.com/p/30720870
         rpn_cls_score = slim.conv2d(rpn, self._num_anchors * 2, [1, 1], trainable=is_training, weights_initializer=initializer, padding='VALID', activation_fn=None, scope='rpn_cls_score')
 
-        # 当前的 shape 是 [N, H, W, C]，C 为 self._num_anchors * 2, 需要配合 softmax 二分类转换为 [N, 2, H, W]
+        # 当前的 shape 是 [N, H, W, C]，C 为 self._num_anchors * 2, 需要配合 softmax 二分类转换为 [N, H * 9, W, 2]
         rpn_cls_score_reshape = self._reshape_layer(rpn_cls_score, 2, 'rpn_cls_score_reshape')
         rpn_cls_prob_reshape = self._softmax_layer(rpn_cls_score_reshape, 'rpn_cls_prob_reshape')
         # softmax 预测完后还原回 rpn_cls_score 的 shape
@@ -80,13 +87,16 @@ class vgg16(Network):
         # bounding regression 回归层
         rpn_bbox_pred = slim.conv2d(rpn, self._num_anchors * 4, [1, 1], trainable=is_training, weights_initializer=initializer, padding='VALID', activation_fn=None, scope='rpn_bbox_pred')
 
+        # 把 rpn_cls_score_reshape 也返回是为了 rpn 层的训练
         return rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape
 
     def build_proposals(self, is_training, rpn_cls_prob, rpn_bbox_pred, rpn_cls_score):
         if is_training:
             # rois 为推荐的 anchors，roi_scroes 为推荐的 anchors 对应的得分(rpn_cls_prob中的)
             rois, roi_scores = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred, "rois")
-            
+            # rpn_labels 为每个 anchor 对应的前景背景分类
+            rpn_labels = self._anchor_target_layer(rpn_cls_score, "anchor")
+
 
     def get_variables_to_restore(self, variables, var_keep_dic):
         variables_to_restore = []

@@ -20,6 +20,8 @@ tf.app.flags.DEFINE_integer('rng_seed', 3, "Tensorflow seed for reproducibility"
 tf.app.flags.DEFINE_float('weight_decay', 0.0005, "Weight decay, for regularization")
 tf.app.flags.DEFINE_float('rpn_positive_overlap', 0.7, "IOU >= thresh: positive example")
 tf.app.flags.DEFINE_float('rpn_fg_fraction', 0.5, "Max number of foreground examples")
+tf.app.flags.DEFINE_float('learning_rate', 0.001, "Learning rate")
+tf.app.flags.DEFINE_float('momentum', 0.9, "Momentum")
 
 tf.app.flags.DEFINE_integer('batch_size', 256, "Network batch size during training")
 tf.app.flags.DEFINE_integer('max_size', 1000, "Max pixel size of the longest side of a scaled input image")

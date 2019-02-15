@@ -1,5 +1,8 @@
 import time
 
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
+
 import numpy as np
 import tensorflow as tf
 from tensorflow.python import pywrap_tensorflow
@@ -63,7 +66,16 @@ class Train:
         with sess.graph.as_default():
 
             tf.set_random_seed(cfg.FLAGS.rng_seed)
-            layers = self.net.create_architecture(sess, "Train", self.imdb.num_classes, tag="default")
+            layers = self.net.create_architecture(sess, "TRAIN", self.imdb.num_classes, tag="default")
+            loss = layers["total_loss"]
+            lr = tf.Variable(cfg.FLAGS.learning_rate, trainable=False)
+            momentum = cfg.FLAGS.momentum
+            optimizer = tf.train.MomentumOptimizer(lr, momentum)
+
+            # 损失函数梯度计算
+            gvs = optimizer.compute_gradients(loss)
+
+            train_op = optimizer.apply_gradients(gvs)
 
         # Load weights
         # Fresh train directly from ImageNet weights
@@ -77,16 +89,23 @@ class Train:
 
         restorer = tf.train.Saver(variables_to_restore)
         restorer.restore(sess, cfg.FLAGS.pretrained_model)
+        print('Loaded.')
 
         # 它里面包含了groundtruth 框数据，图片数据，图片标签的一个字典类型数据，
         # 需要说明的是它里面每次只有一张图片的数据，Faster RCNN 整个网络每次只处理一张图片
         # blob
 
         # just for test
-        blobs = self.data_layer.forward()
-        result = sess.run(layers, feed_dict={self.net._image: blobs["data"]})
-        print(result)
-        print(result.shape)
+        last_snapshot_iter = 0
+
+        iter = last_snapshot_iter + 1
+        while iter < 2:
+            blobs = self.data_layer.forward()
+            rpn_loss_cls, rpn_loss_box = self.net.train_step(sess, blobs, train_op)
+            print(rpn_loss_cls, rpn_loss_box)
+        # result = sess.run(layers, feed_dict={self.net._image: blobs["data"]})
+        # print(result)
+        # print(result.shape)
         # print(np.sum(result.reshape([-1, result.shape[-1]])[0]))
         
 

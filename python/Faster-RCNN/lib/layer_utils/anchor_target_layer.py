@@ -15,6 +15,8 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     total_anchors = all_anchors.shape[0]
     # 统计一下在多少个中心提取出来这么多 anchors
     K = total_anchors / num_anchors
+    # 每次只处理一张图片
+    im_info = im_info[0]
 
     # 允许框紧贴图像边缘
     _allowed_border = 0
@@ -24,16 +26,16 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
 
     # 过滤掉不在图像范围内的Boxes, 首先用where函数加条件筛选出索引
     inds_inside = np.where(
-        (all_anchors[:, 0] >= _all_anchors) &
+        (all_anchors[:, 0] >= -_allowed_border) &
         (all_anchors[:, 1] >= -_allowed_border) &
         (all_anchors[:, 2] < im_info[1] + _allowed_border) &  # width
         (all_anchors[:, 3] < im_info[0] + _allowed_border)  # height
-    )
+    )[0]
 
     anchors = all_anchors[inds_inside, :]
 
     # label加一个维度，进行正、负、非正非负样本标注
-    labels = np.empty(len(inds_inside), dtype=np.float32)
+    labels = np.empty((len(inds_inside),), dtype=np.float32)
     labels.fill(-1)
 
     # 计算 anchors 和 gt boxes 的重合率
@@ -89,40 +91,65 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
         disable_inds = npr.choice(bg_inds, size=(len(bg_inds) - num_bg), replace=False)
         labels[disable_inds] = -1
 
-    # 计算 bounding-regression, 注意是 anchor 与其最接近的 gt-box
+    # 计算 bounding-regression, 注意是 anchor 与其最接近的 gt-box 才进行计算
     bbox_targets = _compute_targets(anchors, gt_boxes[argmax_overlaps, :])
 
     bbox_inside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
     # only the positive ones have regression targets
     bbox_inside_weights[labels == 1, :] = np.array(cfg.FLAGS2["bbox_inside_weights"])
 
+    # rpn-bbox-loss 里面的 Nreg
     bbox_outside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
     if cfg.FLAGS.rpn_positive_weight < 0:
-        num_examples = np.sum(labels == 1)
+        num_examples = np.sum(labels >= 0)
         positive_weights = np.ones((1, 4)) * 1.0 / num_examples
         negative_weights = np.ones((1, 4)) * 1.0 / num_examples
     bbox_outside_weights[labels == 1, :] = positive_weights
     bbox_outside_weights[labels == 0, :] = negative_weights
 
+    # unmap 的作用就是映射回原来的 total_anchor 样子
     labels = _unmap(labels, total_anchors, inds_inside, fill=-1)
+    bbox_targets = _unmap(bbox_targets, total_anchors, inds_inside, fill=0)
+    bbox_inside_weights = _unmap(bbox_inside_weights, total_anchors, inds_inside, fill=0)
+    bbox_outside_weights = _unmap(bbox_outside_weights, total_anchors, inds_inside, fill=0)
+
+    # 将 labels reshape 为类似于 rpn_cls_score_reshape 的形式，可以发现 labels 的 C 维在
+    # 第二维，这个没有关系，在训练的时候会把它打平成一维，一样的效果
+    # 注意是 A * height，因为这个是前景分类标签
+    labels = labels.reshape((1, height, width, A)).transpose(0, 3, 1, 2)
+    labels = labels.reshape((1, 1, A * height, width))
+    rpn_labels = labels
+
+    # bbox_targets 要恢复成原始的 shape
+    bbox_targets = bbox_targets.reshape((1, height, width, A * 4))
+    rpn_bbox_targets = bbox_targets
+
+    bbox_inside_weights = bbox_inside_weights.reshape((1, height, width, A * 4))
+    rpn_bbox_inside_weights = bbox_inside_weights
+
+    bbox_outside_weights = bbox_outside_weights.reshape((1, height, width, A * 4))
+
+    rpn_bbox_outside_weights = bbox_outside_weights
+
+    return rpn_labels, rpn_bbox_targets, rpn_bbox_inside_weights, rpn_bbox_outside_weights
 
 
-    def _compute_targets(ex_rois, gt_rois):
+def _compute_targets(ex_rois, gt_rois):
 
-        assert ex_rois.shape[0] == gt_rois.shape[0]
-        assert ex_rois.shape[1] == 4
-        assert gt_rois.shape[1] == 5
+    assert ex_rois.shape[0] == gt_rois.shape[0]
+    assert ex_rois.shape[1] == 4
+    assert gt_rois.shape[1] == 5
 
-        return bbox_transform(ex_rois, gt_rois[:, :4]).astype(np.float32, copy=False)
+    return bbox_transform(ex_rois, gt_rois[:, :4]).astype(np.float32, copy=False)
 
-    
-    def unmap(data, count, inds, fill=0):
-        if len(data.shape) == 1:
-            ret = np.empty((count, ), dtype=np.float32)
-            ret.fill(fill)
-            ret[inds] = data
-        else:
-            ret = np.empty((count,) + data.shape[1:], dtype=np.float32)
-            ret.fill(fill)
-            ret[inds, :] = data
-        return ret
+
+def _unmap(data, count, inds, fill=0):
+    if len(data.shape) == 1:
+        ret = np.empty((count, ), dtype=np.float32)
+        ret.fill(fill)
+        ret[inds] = data
+    else:
+        ret = np.empty((count,) + data.shape[1:], dtype=np.float32)
+        ret.fill(fill)
+        ret[inds, :] = data
+    return ret
