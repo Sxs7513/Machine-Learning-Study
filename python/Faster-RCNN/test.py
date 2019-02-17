@@ -2,44 +2,51 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 import tensorflow as tf
 
+# tensor1 = tf.Variable(
+#     [
+#         [
+#             [
+#                 [1, 2], 
+#                 [3, 4],
+#                 [5, 6],
+#             ],
+#             [
+#                 [7, 8], 
+#                 [9, 10],
+#                 [11, 12]
+#             ],
+#             [
+#                 [13, 14], 
+#                 [15, 16],
+#                 [17, 18]
+#             ],
+#             [
+#                 [19, 20], 
+#                 [21, 22],
+#                 [23, 24]
+#             ],
+#         ], 
+#     ],
+#     dtype=tf.float32
+# )
+
 tensor1 = tf.Variable(
     [
-        [
-            [
-                [1, 2], 
-                [3, 4],
-                [5, 6],
-            ],
-            [
-                [7, 8], 
-                [9, 10],
-                [11, 12]
-            ],
-            [
-                [13, 14], 
-                [15, 16],
-                [17, 18]
-            ],
-            [
-                [19, 20], 
-                [21, 22],
-                [23, 24]
-            ],
-        ], 
-    ],
-    dtype=tf.float32
+        [0,1,2,3],
+        [0,1,2,3]
+    ]
 )
 
 sess = tf.InteractiveSession()
 tensor1.initializer.run()
 
 # tensor2 = tf.transpose(tensor1, [0, 3, 1, 2])
-tensor1 = tf.reshape(tensor1, [1, 1, -1, 2])
+# tensor1 = tf.reshape(tensor1, [1, 1, -1, 2])
 
-tensor1 = tf.reshape(tensor1, [-1])
+# tensor1 = tf.reshape(tensor1, [-1])
 # tensor2 = tf.reshape(tensor2, [-1])
 
-print(sess.run(tensor1))
+print(sess.run(tf.squeeze(tf.slice(tensor1, [0, 0], [-1, 1], name="batch_id"), [1])))
 # print(sess.run(tensor2))
 
 

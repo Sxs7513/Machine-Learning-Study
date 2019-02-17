@@ -14,6 +14,7 @@ from lib.datasets.imdb import imdb as imdb2
 from lib.datasets import roidb as rdl_roidb
 from lib.nets.vgg16 import vgg16
 from lib.layer_utils.roi_data_layer import RoIDataLayer
+from lib.utils.timer import Timer
 
 # Returns a roidb (Region of Interest database) for use in training.
 def get_training_roidb(imdb):
@@ -90,24 +91,43 @@ class Train:
         restorer = tf.train.Saver(variables_to_restore)
         restorer.restore(sess, cfg.FLAGS.pretrained_model)
         print('Loaded.')
+        self.net.fix_variables(sess, cfg.FLAGS.pretrained_model)
+        print('Fixed.')
 
-        # 它里面包含了groundtruth 框数据，图片数据，图片标签的一个字典类型数据，
-        # 需要说明的是它里面每次只有一张图片的数据，Faster RCNN 整个网络每次只处理一张图片
-        # blob
-
-        # just for test
+        sess.run(tf.assign(lr, cfg.FLAGS.learning_rate))
         last_snapshot_iter = 0
 
+        timer = Timer()
         iter = last_snapshot_iter + 1
-        while iter < 2:
+        last_summary_time = time.time()
+
+        while iter < cfg.FLAGS.max_iters + 1:
+            # Learning rate
+            if iter == cfg.FLAGS.step_size + 1:
+                # Add snapshot here before reducing the learning rate
+                # self.snapshot(sess, iter)
+                sess.run(tf.assign(lr, cfg.FLAGS.learning_rate * cfg.FLAGS.gamma))
+
+            timer.tic()
+            # Get training data, one batch at a time
+            # 它里面包含了groundtruth 框数据，图片数据，图片标签的一个字典类型数据，
+            # 需要说明的是它里面每次只有一张图片的数据，Faster RCNN 整个网络每次只处理一张图片 
             blobs = self.data_layer.forward()
-            rpn_loss_cls, rpn_loss_box = self.net.train_step(sess, blobs, train_op)
-            print(rpn_loss_cls, rpn_loss_box)
-        # result = sess.run(layers, feed_dict={self.net._image: blobs["data"]})
-        # print(result)
-        # print(result.shape)
-        # print(np.sum(result.reshape([-1, result.shape[-1]])[0]))
-        
+
+            # Compute the graph without summary
+            rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, total_loss = self.net.train_step(sess, blobs, train_op)
+            timer.toc()
+            iter += 1
+
+            # Display training information
+            if iter % (cfg.FLAGS.display) == 0:
+                print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
+                      '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n ' % \
+                      (iter, cfg.FLAGS.max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box))
+                print('speed: {:.3f}s / iter'.format(timer.average_time))
+
+            if iter % cfg.FLAGS.snapshot_iterations == 0:
+                self.snapshot(sess, iter )
 
     def get_variables_in_checkpoint_file(self, file_name):
         try:

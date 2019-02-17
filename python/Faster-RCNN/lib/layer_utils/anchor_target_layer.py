@@ -4,7 +4,7 @@ from __future__ import print_function
 
 import numpy as np
 import numpy.random as npr
-from lib.utils.cython_bbox import bbox_overlaps
+from cython_bbox import bbox_overlaps
 
 from lib.config import config as cfg
 from lib.utils.bbox_transform import bbox_transform
@@ -108,6 +108,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     bbox_outside_weights[labels == 0, :] = negative_weights
 
     # unmap 的作用就是映射回原来的 total_anchor 样子
+    # 因为 all_anchors 裁减掉了2/3左右，仅仅保留在图像内的anchor。这里就是将其复原作为下一层的输入了，并reshape成相应的格式
     labels = _unmap(labels, total_anchors, inds_inside, fill=-1)
     bbox_targets = _unmap(bbox_targets, total_anchors, inds_inside, fill=0)
     bbox_inside_weights = _unmap(bbox_inside_weights, total_anchors, inds_inside, fill=0)

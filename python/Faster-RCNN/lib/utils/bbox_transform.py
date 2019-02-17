@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import print_function
 
 import numpy as np
+import lib.config.config as cfg
 
 # ex_rois 为提取的 anchors， gt_rois 为 bbox-pred
 def bbox_transform(ex_rois, gt_rois):
@@ -43,10 +44,13 @@ def bbox_transform_inv(boxes, deltas):
     dx = deltas[:, 0::4]
     dy = deltas[:, 1::4]
     dw = deltas[:, 2::4]
-    dh = deltas[:, 3::4] 
+    dh = deltas[:, 3::4]
 
     # 计算回归后的中心点，与 w 与 h
-    pred_ctr_x = dx * widths[: np.newaxis] + ctr_x[: np.newaxis]
+    dw = np.minimum(dw, cfg.BBOX_XFORM_CLIP)
+    dh = np.minimum(dh, cfg.BBOX_XFORM_CLIP)
+
+    pred_ctr_x = dx * widths[:, np.newaxis] + ctr_x[:, np.newaxis]
     pred_ctr_y = dy * heights[:, np.newaxis] + ctr_y[:, np.newaxis]
     pred_w = np.exp(dw) * widths[:, np.newaxis]
     pred_h = np.exp(dh) * heights[:, np.newaxis]
@@ -76,4 +80,4 @@ def clip_boxes(boxes, im_shape):
     boxes[:, 2::4] = np.maximum(np.minimum(boxes[:, 2::4], im_shape[1] - 1), 0)
     # y2 < im_shape[0]
     boxes[:, 3::4] = np.maximum(np.minimum(boxes[:, 3::4], im_shape[0] - 1), 0)
-    return
+    return boxes

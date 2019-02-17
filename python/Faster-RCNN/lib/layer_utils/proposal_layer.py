@@ -26,8 +26,8 @@ def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, 
 
     # 每次只会处理一张图片，取出原始图的 shape 信息，第一维是图片数量
     im_info = im_info[0]
-    # 取出RPN预测的框属于前景的分数，请注意，在18个channel中，前9个是框属于背景的概率，后9个才是属于前景的概率
-    # 注意这个是人为选取的哦，并没有绝对的哪个是哪个
+    # 取出RPN预测的框属于前景的分数，在18个channel中，前9个是框属于背景的概率，后9个才是属于前景的概率
+    # 注意这个是人为定的哦，并没有绝对的哪个是哪个
     scores = rpn_cls_prob[:,:,:, num_anchors:]
     # 回归预测打平，为了之后与 前景score 一一对应
     rpn_bbox_pred = rpn_bbox_pred.reshape((-1, 4))
@@ -49,7 +49,7 @@ def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, 
     scores = scores[order]
 
     # 非极大值抑制
-    keep = nms(np.hstack(proposals, scores), nms_thresh)
+    keep = nms(np.hstack((proposals, scores)), nms_thresh)
 
     if post_nms_topN > 0:
         keep = keep[:post_nms_topN]

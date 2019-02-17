@@ -10,19 +10,24 @@ from tensorflow.contrib.slim import arg_scope
 from lib.config import config as cfg
 from lib.layer_utils.snippets import generate_anchors_pre
 from lib.layer_utils.proposal_layer import proposal_layer
+from lib.layer_utils.proposal_target_layer import proposal_target_layer
+from lib.layer_utils.proposal_top_layer import proposal_top_layer
 from lib.layer_utils.anchor_target_layer import anchor_target_layer
 
 class Network(object):
     def __init__(self, batch_size=1):
         # vgg16 模型总共有4个池化层，到 rpn 的时候相比原图缩小16倍
         self._feat_stride = [16, ]
+        self._feat_compress = [1. / 16., ]
         self._batch_size = batch_size
         self._predictions = {}
-        self._anchor_targets = {}
-        self._layers = {}
         self._losses = {}
+        self._anchor_targets = {}
+        self._proposal_targets = {}
+        self._layers = {}
         self._act_summaries = []
         self._score_summaries = {}
+        self._train_summaries = []
         self._event_summaries = {}
         self._variables_to_fix = {}
 
@@ -49,9 +54,11 @@ class Network(object):
             bottom_reshaped = tf.reshape(bottom, [-1, input_shape[-1]])
             reshaped_score = tf.nn.softmax(bottom_reshaped, name=name)
             return tf.reshape(reshaped_score, input_shape)
-        return tf.nn.softmax(bottom, name)
+        return tf.nn.softmax(bottom, name=name)
 
-    # 选取推荐的 anchor (128 个正面样本, 128个负面), 用于下一层 rcnn 的分类
+    # 使用经过rpn网络层后生成的 rpn_bbox_prob 把 anchor 位置进行第一次修正
+    # 按照得分排序，取前12000个anchor，再nms,取前面2000个
+    # 但是这个数字在test的时候就变成了6000和300，这就是最后结果300个框的来源
     def _proposal_layer(self, rpn_cls_prob, rpn_bbox_pred, name):
         with tf.variable_scope(name):
             rois, rpn_scores = tf.py_func(
@@ -68,7 +75,8 @@ class Network(object):
 
     def _anchor_target_layer(self, rpn_cls_score, name):
         with tf.variable_scope(name):
-        # 计算所有 anchor 对应的类型, 以及它们的 bounding-regression, 以及帮助计算 bbox-loss 的矩阵
+            # 计算所有 anchor 对应的类型, 以及它们的 bounding-regression, 以及帮助计算 bbox-loss 的矩阵
+            # 注意只有 256 个会进入 rnp-loss 计算
             rpn_labels, rpn_bbox_targets, rpn_bbox_inside_weights, rpn_bbox_outside_weights = tf.py_func(
                     anchor_target_layer,
                     [rpn_cls_score, self._gt_boxes, self._im_info, self._feat_stride, self._anchors, self._num_anchors],
@@ -89,6 +97,63 @@ class Network(object):
             self._score_summaries.update(self._anchor_targets)
 
         return rpn_labels
+
+    # 获得属于最后的分类网络的label，使用的是 _proposal_layer 提供的数据，进行进一步的筛选
+    def _proposal_target_layer(self, rois, roi_scores, name):
+        with tf.variable_scope(name):
+            rois, roi_scores, labels, bbox_targets, bbox_inside_weights, bbox_outside_weights = tf.py_func(
+                proposal_target_layer,
+                [rois, roi_scores, self._gt_boxes, self._num_classes],
+                [tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32]
+            )
+
+            rois.set_shape([cfg.FLAGS.batch_size, 5])
+            roi_scores.set_shape([cfg.FLAGS.batch_size])
+            labels.set_shape([cfg.FLAGS.batch_size, 1])
+            bbox_targets.set_shape([cfg.FLAGS.batch_size, self._num_classes * 4])
+            bbox_inside_weights.set_shape([cfg.FLAGS.batch_size, self._num_classes * 4])
+            bbox_outside_weights.set_shape([cfg.FLAGS.batch_size, self._num_classes * 4])
+
+            self._proposal_targets['rois'] = rois
+            self._proposal_targets['labels'] = tf.to_int32(labels, name="to_int32")
+            self._proposal_targets['bbox_targets'] = bbox_targets
+            self._proposal_targets['bbox_inside_weights'] = bbox_inside_weights
+            self._proposal_targets['bbox_outside_weights'] = bbox_outside_weights
+
+            self._score_summaries.update(self._proposal_targets)
+
+            return rois, roi_scores
+    
+    def _proposal_top_layer(self, rpn_cls_prob, rpn_bbox_pred, name):
+        with tf.variable_scope(name):
+            rois, rpn_scores = tf.py_func(proposal_top_layer,
+                                          [rpn_cls_prob, rpn_bbox_pred, self._im_info,
+                                           self._feat_stride, self._anchors, self._num_anchors],
+                                          [tf.float32, tf.float32])
+            rois.set_shape([cfg.FLAGS.rpn_top_n, 5])
+            rpn_scores.set_shape([cfg.FLAGS.rpn_top_n, 1])
+
+        return rois, rpn_scores
+
+    # 没有用论文里的 roi-polling，而是直接 resize-crop 了
+    # bottom 就是共享的 conv_5 网络
+    def _crop_pool_layer(self, bottom, rois, name):
+        with tf.variable_scope(name):
+            batch_ids = tf.squeeze(tf.slice(rois, [0, 0], [-1, 1], name="batch_id"), [1])
+            bottom_shape = tf.shape(bottom)
+            # tf.image.crop_and_resize 函数需要传入的 boxes 归一化
+            height = (tf.to_float(bottom_shape[1]) - 1.) * np.float32(self._feat_stride[0])
+            width = (tf.to_float(bottom_shape[2]) - 1.) * np.float32(self._feat_stride[0])
+            x1 = tf.slice(rois, [0, 1], [-1, 1], name="x1") / width
+            y1 = tf.slice(rois, [0, 2], [-1, 1], name="y1") / height
+            x2 = tf.slice(rois, [0, 3], [-1, 1], name="x2") / width
+            y2 = tf.slice(rois, [0, 4], [-1, 1], name="y2") / height
+
+            bboxes = tf.stop_gradient(tf.concat([y1, x1, y2, x2], axis=1))
+            pre_pool_size = cfg.FLAGS.roi_pooling_size * 2
+            crops = tf.image.crop_and_resize(bottom, bboxes, tf.to_int32(batch_ids), [pre_pool_size, pre_pool_size], name="crops")
+
+        return slim.max_pool2d(crops, [2, 2], padding='SAME')
 
     def create_architecture(self, sess, mode, num_classes, tag=None, anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
         self._image = tf.placeholder(tf.float32, shape=[self._batch_size, None, None, 3])
@@ -125,16 +190,38 @@ class Network(object):
             biases_regularizer=biases_regularizer,
             biases_initializer=tf.constant_initializer(0.0)
         ):
-            net = self.build_network(sess, training)
+            rois, cls_prob, bbox_pred = self.build_network(sess, training)
 
-        self._add_losses()
+        layers_to_output = {'rois': rois}
+        layers_to_output.update(self._predictions)
 
-        layers_to_output = {}
+        for var in tf.trainable_variables():
+            self._train_summaries.append(var)
 
         if mode == 'TEST':
-            pass
+            stds = np.tile(np.array(cfg.FLAGS2["bbox_normalize_stds"]), (self._num_classes))
+            means = np.tile(np.array(cfg.FLAGS2["bbox_normalize_means"]), (self._num_classes))
+            self._predictions["bbox_pred"] *= stds
+            self._predictions["bbox_pred"] += means
         else:
+            self._add_losses()
             layers_to_output.update(self._losses)
+
+        val_summaries = []
+        with tf.device("/cpu:0"):
+            val_summaries.append(self._add_image_summary(self._image, self._gt_boxes))
+            for key, var in self._event_summaries.items():
+                val_summaries.append(tf.summary.scalar(key, var))
+            for key, var in self._score_summaries.items():
+                self._add_score_summary(key, var)
+            for var in self._act_summaries:
+                self._add_act_summary(var)
+            for var in self._train_summaries:
+                self._add_train_summary(var)
+
+        self._summary_op = tf.summary.merge_all()
+        if not testing:
+            self._summary_op_val = tf.summary.merge(val_summaries)
 
         return layers_to_output
 
@@ -159,21 +246,16 @@ class Network(object):
     
     def _smooth_l1_loss(self, bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights, sigma=1.0, dim=[1]):
         sigma_2 = sigma ** 2
-        box_diff = bbox_targets - bbox_pred
-        # 只是为了将非前景的 bounding-regression 全部置为 0, 所以直接乘
+        box_diff = bbox_pred - bbox_targets
         in_box_diff = bbox_inside_weights * box_diff
         abs_in_box_diff = tf.abs(in_box_diff)
-        # smmoth 是分段的, 所以要打成两段, 这一段是大于 1 的位置, 非大于1 的都被置为 0, 用 1 减去这个即得到另一段在哪
-        smoothL1_sign = tf.stop_gradient(tf.to_float(tf.less(abs_in_box_diff, 1 / sigma_2)))
+        smoothL1_sign = tf.stop_gradient(tf.to_float(tf.less(abs_in_box_diff, 1. / sigma_2)))
         in_loss_box = tf.pow(in_box_diff, 2) * (sigma_2 / 2.) * smoothL1_sign + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
-        # Nreg
         out_loss_box = bbox_outside_weights * in_loss_box
-        # 多维度求和(公式要求)
-        loss_box = tf.reduce_sum(
-            out_loss_box, 
+        loss_box = tf.reduce_mean(tf.reduce_sum(
+            out_loss_box,
             axis=dim
-        )
-
+        ))
         return loss_box
 
     def _add_losses(self, sigma_rpn=3.0):
@@ -181,6 +263,7 @@ class Network(object):
             # RPN, class loss
             # rpn_labels 是每个 anchor 的标签 ([N W H 9]) rpn_cls_score_reshape 是 [N, H * 9, W, 2]
             # softmax 是对最后一维进行处理, 所以是对每一个 anchor 都有一个 [前景概率, 背景概率]
+            # 注意真正进行了loss计算的只有那 256 个 anchor
             rpn_cls_score = tf.reshape(self._predictions['rpn_cls_score_reshape'], [-1, 2])
             rpn_label = tf.reshape(self._anchor_targets['rpn_labels'], [-1])
             rpn_select = tf.where(tf.not_equal(rpn_label, -1))
@@ -201,26 +284,80 @@ class Network(object):
             rpn_loss_box = self._smooth_l1_loss(rpn_bbox_pred, rpn_bbox_targets, rpn_bbox_inside_weights,
                                                 rpn_bbox_outside_weights, sigma=sigma_rpn, dim=[1, 2, 3])
 
+            # RCNN, class loss
+            cls_score = self._predictions["cls_score"]
+            label = tf.reshape(self._proposal_targets["labels"], [-1])
+            cross_entropy = tf.reduce_mean(
+                tf.nn.sparse_softmax_cross_entropy_with_logits(
+                    logits = tf.reshape(cls_score, [-1, self._num_classes]),
+                    labels=label
+                )
+            )
 
+            # RCNN, bbox loss
+            bbox_pred = self._predictions['bbox_pred']
+            bbox_targets = self._proposal_targets['bbox_targets']
+            bbox_inside_weights = self._proposal_targets['bbox_inside_weights']
+            bbox_outside_weights = self._proposal_targets['bbox_outside_weights']
+
+            loss_box = self._smooth_l1_loss(bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights)
+
+            self._losses['cross_entropy'] = cross_entropy
+            self._losses['loss_box'] = loss_box
             self._losses['rpn_cross_entropy'] = rpn_cross_entropy
             self._losses['rpn_loss_box'] = rpn_loss_box
 
-            loss = rpn_cross_entropy + rpn_loss_box
+            loss = cross_entropy + loss_box + rpn_cross_entropy + rpn_loss_box
             self._losses['total_loss'] = loss
 
             self._event_summaries.update(self._losses)
 
+        return loss
+
     def train_step(self, sess, blobs, train_op):
-        feed_dict = {
-            self._image: blobs['data'], 
-            self._im_info: blobs['im_info'],
-            self._gt_boxes: blobs['gt_boxes']
-        }
-
-        rpn_loss_cls, rpn_loss_box, _ = sess.run([
-            self._losses['rpn_cross_entropy'],
+        feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
+                     self._gt_boxes: blobs['gt_boxes']}
+        rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss, _ = sess.run(
+            [self._losses["rpn_cross_entropy"],
             self._losses['rpn_loss_box'],
-            train_op,
-        ], feed_dict=feed_dict)
+            self._losses['cross_entropy'],
+            self._losses['loss_box'],
+            self._losses['total_loss'],
+            train_op],
+            feed_dict=feed_dict
+        )
+        return rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss
 
-        return rpn_loss_cls, rpn_loss_box
+    # Summaries #
+    def _add_image_summary(self, image, boxes):
+        # add back mean
+        image += cfg.FLAGS2["pixel_means"]
+        # bgr to rgb (opencv uses bgr)
+        channels = tf.unstack(image, axis=-1)
+        image = tf.stack([channels[2], channels[1], channels[0]], axis=-1)
+        # dims for normalization
+        width = tf.to_float(tf.shape(image)[2])
+        height = tf.to_float(tf.shape(image)[1])
+        # from [x1, y1, x2, y2, cls] to normalized [y1, x1, y1, x1]
+        cols = tf.unstack(boxes, axis=1)
+        boxes = tf.stack([cols[1] / height,
+                          cols[0] / width,
+                          cols[3] / height,
+                          cols[2] / width], axis=1)
+        # add batch dimension (assume batch_size==1)
+        #assert image.get_shape()[0] == 1
+        boxes = tf.expand_dims(boxes, dim=0)
+        image = tf.image.draw_bounding_boxes(image, boxes)
+
+        return tf.summary.image('ground_truth', image)
+
+    def _add_act_summary(self, tensor):
+        tf.summary.histogram('ACT/' + tensor.op.name + '/activations', tensor)
+        tf.summary.scalar('ACT/' + tensor.op.name + '/zero_fraction',
+                          tf.nn.zero_fraction(tensor))
+
+    def _add_score_summary(self, key, tensor):
+        tf.summary.histogram('SCORE/' + tensor.op.name + '/' + key + '/scores', tensor)
+
+    def _add_train_summary(self, var):
+        tf.summary.histogram('TRAIN/' + var.op.name, var)
