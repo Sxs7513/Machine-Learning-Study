@@ -44,8 +44,11 @@ class RoIDataLayer(object):
         return db_inds
 
     def _get_next_minibatch(self):
+        # 获取这次要处理的图片的 index
         db_inds = self._get_next_minibatch_inds()
         minibatch_db = [self._roidb[i] for i in db_inds]
+        # 获得 gt_boxes 即图片里的目标信息，它 shape 为 (x1, y1, x2, y2, cls)， 其中坐标为经过缩放后的位置
+        # im_info 为缩放后的图片 shape 与缩放信
         return get_minibatch(minibatch_db, self._num_classes)
 
     # Get blobs and copy them into this layer's top blob vector

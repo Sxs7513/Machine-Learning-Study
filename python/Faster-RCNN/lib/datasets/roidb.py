@@ -14,20 +14,23 @@ import PIL
 def prepare_roidb(imdb):
     roidb = imdb.roidb
     if not (imdb.name.startswith("coco")):
+        # 获得所有的图片的大小
         sizes = [
             PIL.Image.open(imdb.image_path_at(i)).size
             for i in range(imdb.num_images)
         ]
     for i in range(len(imdb.image_index)):
+        # 该编号对应的图片的路径
         roidb[i]["image"] = imdb.image_path_at(i)
         if not (imdb.name.startswith('coco')):
+            # 讲编号对应的图片的宽高挂载到图片对应的对象上
             roidb[i]["width"] = sizes[i][0]
             roidb[i]["height"] = sizes[i][1]
             # 从压缩的转换为 softmax 需要的 one-hot 向量
             gt_overlaps = roidb[i]['gt_overlaps'].toarray()
-            # 背景还是非背景
+            # what is this?
             max_overlaps = gt_overlaps.max(axis=1)
-            # 代表的类别，包括背景，背景则全为 0
+            # 代表的类别
             max_classes = gt_overlaps.argmax(axis=1)
             roidb[i]['max_classes'] = max_classes
             roidb[i]['max_overlaps'] = max_overlaps

@@ -31,11 +31,14 @@ def get_training_roidb(imdb):
 
 # Combine multiple roidbs
 def combined_roidb(imdb_names):
+
     def get_roidb(imdb_name):
         imdb = get_imdb(imdb_name)
         print('Loaded dataset `{:s}` for training'.format(imdb.name))
         imdb.set_proposal_method("gt")
         print('Set proposal method: {:s}'.format("gt"))
+        # 获得需要的数据集下所有图片的 xml 信息，每个图片均保存了一个信息对象
+        # 包括图片里面的目标的位置类别大小等信息，和每个图片的大小
         roidb = get_training_roidb(imdb)
         return roidb
         
@@ -52,7 +55,8 @@ class Train:
     def __init__(self):
         self.net = vgg16(batch_size=cfg.FLAGS.ims_per_batch)
         # imdb 对所有图片名称，路径，类别等相关信息做了一个汇总
-        # roidb 是imdb的一个属性，里面是一个字典，包含了它的GTbox，以及真实标签和翻转标签
+        # roidb 是imdb的一个属性，里面是一个字典，里面包含了需要的数据集里面图片所有信息
+        # roidb 是一个数组
         self.imdb, self.roidb = combined_roidb("voc_2007_trainval")
 
         self.data_layer = RoIDataLayer(self.roidb, self.imdb.num_classes)
@@ -110,8 +114,11 @@ class Train:
 
             timer.tic()
             # Get training data, one batch at a time
-            # 它里面包含了groundtruth 框数据，图片数据，图片标签的一个字典类型数据，
-            # 需要说明的是它里面每次只有一张图片的数据，Faster RCNN 整个网络每次只处理一张图片 
+            # blobs 为本次训练的所有图片的信息，里面包含如下：
+            # gt_boxes 即图片里的目标信息，它 shape 为 (x1, y1, x2, y2, cls)， 其中坐标为经过缩放后的位置
+            # im_info 即缩放后的图片 shape 与缩放大小
+            # data 图片经过缩放后的数据
+            # 在数据整理过程中的其他数据均已经不再重要
             blobs = self.data_layer.forward()
 
             # Compute the graph without summary

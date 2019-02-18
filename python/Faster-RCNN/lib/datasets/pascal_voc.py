@@ -33,6 +33,7 @@ class pascal_voc(imdb):
                          'sheep', 'sofa', 'train', 'tvmonitor')
         self._class_to_ind = dict(list(zip(self.classes, list(range(self.num_classes)))))
         self._image_ext = '.jpg'
+        # 要加载的 imageSet，即该图片对应的编号
         self._image_index = self._load_image_set_index()
 
         # PASCAL specific config options
@@ -50,6 +51,7 @@ class pascal_voc(imdb):
             'Path does not exist: {}'.format(self._data_path)
 
     # Return the absolute path to image i in the image sequence.
+    # 获得对应编号图片的路径
     def image_path_at(self, i):
         return self.image_path_from_index(self.image_index[i])
 
@@ -83,6 +85,7 @@ class pascal_voc(imdb):
 
     # Return the database of ground-truth regions of interest.
     # This function loads/saves from/to a cache file to speed up future calls.
+    # 加载所有图片的 xml 信息，每个图片对应一个对象
     def gt_roidb(self):
         cache_file = os.path.join(self.cache_path, self.name + '_gt_roidb.pkl')
         if os.path.exists(cache_file):
@@ -107,6 +110,7 @@ class pascal_voc(imdb):
         # self._load_pascal_annotation(self._image_index[0])
 
     # Load image and bounding boxes info from XML file in the PASCAL VOC format.
+    # 加载某一个编号的图片 xml 信息，包括图片中目标位置信息，目标类别，目标长宽
     def _load_pascal_annotation(self, index):
         filename = os.path.join(
             self._data_path,
@@ -117,17 +121,20 @@ class pascal_voc(imdb):
         objs = tree.findall('object')
         if not self.config["use_diff"]:
             # Exclude the samples labeled as difficult
+            # 去除面积过小样本
             non_diff_objs = [
                 obj for obj in objs if int(obj.find('difficult').text) == 0
             ]
             objs = non_diff_objs
         num_objs = len(objs)
 
+        # 已标出的检测目标的位置与类别
         boxes = np.zeros((num_objs, 4), dtype=np.uint16)
         gt_classes = np.zeros((num_objs), dtype=np.int32)
         # 供 softmax 使用的 one-hot 向量
         overlaps = np.zeros((num_objs, self.num_classes), dtype=np.float32)
         # "Seg" area for pascal is just the box area
+        # box的长宽
         seg_areas = np.zeros((num_objs), dtype=np.float32)
 
         # Load object bounding boxes into a data frame.
@@ -144,6 +151,7 @@ class pascal_voc(imdb):
             overlaps[ix, cls] = 1.0
             seg_areas[ix] = (x2 - x1 + 1) * (y2 - y1 + 1)
         
+        # 稀疏矩阵压缩，缩小保存体积
         overlaps = scipy.sparse.csr_matrix(overlaps)
         
         return {

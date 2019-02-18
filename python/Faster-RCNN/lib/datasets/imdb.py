@@ -52,6 +52,7 @@ class imdb(object):
     #   gt_overlaps
     #   gt_classes
     #   flipped
+    # 与 set_proposal_method 配合，获取 roidb 数据集
     @property
     def roidb(self):
         if self._roidb is not None:
