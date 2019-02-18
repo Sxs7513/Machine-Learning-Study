@@ -168,7 +168,7 @@ class Network(object):
 
         self._anchor_ratios = anchor_ratios
         self._num_ratios = len(anchor_ratios)
-        # 每个像素 anchors 数量（3 * 3）
+        # conv_5 中每个像素 anchors 数量（3 * 3）
         self._num_anchors = self._num_scales * self._num_ratios
 
         training = mode == 'TRAIN'
@@ -177,6 +177,7 @@ class Network(object):
         assert tag != None
 
         # handle most of the regularizer here
+        # 添加 L2 正则项
         weights_regularizer = tf.contrib.layers.l2_regularizer(cfg.FLAGS.weight_decay)
         if cfg.FLAGS.bias_decay:
             biases_regularizer = weights_regularizer
@@ -184,6 +185,7 @@ class Network(object):
             biases_regularizer = tf.no_regularizer
 
         # list as many types of layers as possible, even if they are not used now
+        # 使用 slim 提供的 arg_scope 来简化网络层参数的写法, 赋予一些默认参数
         with arg_scope(
             [slim.conv2d, slim.conv2d_in_plane, slim.conv2d_transpose, slim.separable_conv2d, slim.fully_connected],
             weights_regularizer=weights_regularizer,
