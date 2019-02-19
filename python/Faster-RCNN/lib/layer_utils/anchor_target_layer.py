@@ -4,11 +4,13 @@ from __future__ import print_function
 
 import numpy as np
 import numpy.random as npr
-from cython_bbox import bbox_overlaps
+from lib.utils.cython_bbox import bbox_overlaps
+# from cython_bbox import bbox_overlaps
 
 from lib.config import config as cfg
 from lib.utils.bbox_transform import bbox_transform
 
+# 为 rpn 网络的训练准备数据，包括最终进入 rpn 训练的 anchors（256个），它们的 bounding-Regression
 def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anchors, num_anchors):
     A = num_anchors
     # 所有 anchors 数量
@@ -24,7 +26,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     # [H, W]
     height, width = rpn_cls_score.shape[1:3]
 
-    # 过滤掉不在图像范围内的Boxes, 首先用where函数加条件筛选出索引
+    # 过滤掉不在图像范围内的 Boxes, 首先用 where 函数加条件筛选出索引
     inds_inside = np.where(
         (all_anchors[:, 0] >= -_allowed_border) &
         (all_anchors[:, 1] >= -_allowed_border) &
@@ -38,7 +40,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     labels = np.empty((len(inds_inside),), dtype=np.float32)
     labels.fill(-1)
 
-    # 计算 anchors 和 gt boxes 的重合率
+    # 计算每个 anchors 和每个 gt boxes 的重合率
     # bbox_overlaps 是一个现成函数：from utils.cython_bbox import bbox_overlaps（）
     # np.ascontiguousarray返回一个指定数据类型的连续数组，转存为顺序结构的数据
     # 可以看 util 中的 bbox.pyx
@@ -49,7 +51,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     )
     # 每个 anchor 最接近哪个 gt-box
     argmax_overlaps = overlaps.argmax(axis=1)
-    # 提取每一行最大重叠率
+    # 提取每一行最大重叠率，提取框与某个 gt-box 重叠率最大则认为是提取框与它的对比，其他的均忽略
     max_overlaps = overlaps[np.arange(len(inds_inside)), argmax_overlaps]
     # 获得与某个 gtbox 重合率最大的 anchor 的列索引，即对应 overlaps 的行索引
     gt_argmax_overlaps = overlaps.argmax(axis=0)
@@ -63,10 +65,10 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
         # first set the negatives
         labels[max_overlaps < cfg.FLAGS.rpn_negative_overlap] = 0
 
-    # 打上前景标签：对于每一个gt框，重叠率最大的检测框不论阈值多少都算foreground.
+    # 打上前景标签：对于每一个gt框，重叠率最大的提取框不论阈值多少都算foreground.
     labels[gt_argmax_overlaps] = 1
 
-    # 打上前景标签2：满足重叠率的检测结果打上foreground标签
+    # 打上前景标签2：满足重叠率的检测结果打上 foreground 标签
     labels[max_overlaps >= cfg.FLAGS.rpn_positive_overlap] = 1
 
     # 打上背景标签
@@ -94,6 +96,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     # 计算 bounding-regression, 注意是 anchor 与其最接近的 gt-box 才进行计算
     bbox_targets = _compute_targets(anchors, gt_boxes[argmax_overlaps, :])
 
+    # bbox_inside_weights 矩阵是用于 loss 函数的
     bbox_inside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
     # only the positive ones have regression targets
     bbox_inside_weights[labels == 1, :] = np.array(cfg.FLAGS2["bbox_inside_weights"])

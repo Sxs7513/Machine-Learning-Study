@@ -30,6 +30,7 @@ def bbox_transform(ex_rois, gt_rois):
 
 
 # boxes 为 anchors，deltas 为 rpn_bbox_pred (shape = [-1, 4])
+# deltas 为预测的回归系数，dx dy dw dh，boxes 为提取的 anchors
 def bbox_transform_inv(boxes, deltas):
     if boxes.shape[0] == 0:
         return np.zeros((0, deltas.shape[1]), dtype=deltas.dtype)

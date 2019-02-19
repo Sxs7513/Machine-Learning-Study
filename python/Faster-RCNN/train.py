@@ -77,9 +77,8 @@ class Train:
             momentum = cfg.FLAGS.momentum
             optimizer = tf.train.MomentumOptimizer(lr, momentum)
 
-            # 损失函数梯度计算
+            # 损失函数自动求导
             gvs = optimizer.compute_gradients(loss)
-
             train_op = optimizer.apply_gradients(gvs)
 
         # Load weights

@@ -11,8 +11,10 @@ from lib.layer_utils.generate_anchors import generate_anchors
 # A wrapper function to generate anchors given different scales
 # Also return the number of anchors in variable 'length'
 def generate_anchors_pre(height, width, feat_stride, anchor_scales=(8, 16, 32), anchor_ratios=(0.5, 1, 2)):
+    # 首先生成初始的 anchors
     anchors = generate_anchors(ratios=np.array(anchor_ratios), scales=np.array(anchor_scales))
     A = anchors.shape[0]
+    # shift 作用是代表每个点相对于原始中心的位移，这样即可以直接生成所有点的 anchor
     shift_x = np.arange(0, width) * feat_stride
     shift_y = np.arange(0, height) * feat_stride
     # meshgrid 看 https://zhuanlan.zhihu.com/p/33579211 页面最后的讲解

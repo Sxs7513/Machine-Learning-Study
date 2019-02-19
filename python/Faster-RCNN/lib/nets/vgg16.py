@@ -11,10 +11,12 @@ class vgg16(Network):
     def __init__(self, batch_size=1):
         Network.__init__(self, batch_size=batch_size)
 
+    # 创建整体网络
     def build_network(self, sess, is_training=True):
         with tf.variable_scope("vgg_16", "vgg_16"):
             # select initializer
             if cfg.FLAGS.initializer == "truncated":
+                # 生成截断正态分布的随机数，均值为 0， 标准差为 0.01 0.001
                 initializer = tf.truncated_normal_initializer(
                     mean=0.0, stddev=0.01)
                 initializer_bbox = tf.truncated_normal_initializer(
@@ -26,20 +28,26 @@ class vgg16(Network):
                     mean=0.0, stddev=0.001)
 
             # Build head
+            # 创建 vgg16 标准的网络，该网络共五层，最后输出的卷积特征图相比原图
+            # 会缩小 16 倍，这 16 倍完全是由池化层造成的，卷积层全部使用 same 来保持大小
             net = self.build_head(is_training)
 
             # Build rpn
+            # 构建 rpn 网络
             rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape = self.build_rpn(
                 net, is_training, initializer)
 
             # Build proposals
+            # 创建 proposal 网络，用于提供数据给 Fast R-CNN 网络进行分类与再次回归训练
             rois = self.build_proposals(is_training, rpn_cls_prob,
                                         rpn_bbox_pred, rpn_cls_score)
 
             # Build predictions
+            # 构建 fast-rcnn 网络预测
             cls_score, cls_prob, bbox_pred = self.build_predictions(
                 net, rois, is_training, initializer, initializer_bbox)
 
+            # 缓存
             self._predictions["rpn_cls_score"] = rpn_cls_score
             self._predictions["rpn_cls_score_reshape"] = rpn_cls_score_reshape
             self._predictions["rpn_cls_prob"] = rpn_cls_prob
@@ -103,10 +111,13 @@ class vgg16(Network):
 
         return net
 
+    # 构建 rpn 网络，用于训练提取 select-region 与 box-regression
     def build_rpn(self, net, is_training, initializer):
+        # 提取 net 视野下的所有 anchors
         self._anchor_component()
 
         # Create RPN Layer
+        # 再来个 3*3 的卷积
         rpn = slim.conv2d(
             net,
             512, [3, 3],
@@ -115,6 +126,7 @@ class vgg16(Network):
             scope="rpn_conv/3x3")
 
         self._act_summaries.append(net)
+
         # 用于分类背景和目标，注意 rpn 并没有显式地提取任何候选窗口，完全使用网络自身完成判断和修正
         # 不要用 R-CNN 的 select-region 思想去想 rpn
         # https://zhuanlan.zhihu.com/p/30720870
@@ -128,7 +140,7 @@ class vgg16(Network):
             scope='rpn_cls_score')
 
         # 当前的 shape 是 [N, H, W, C]，C 为 self._num_anchors * 2, 需要配合 softmax 二分类转换为 [N, H * 9, W, 2]
-        # 因为 tf.softmax 只会处理最后一纬度
+        # 因为 tf.softmax 只会处理最后一维度，2 代表每个 anchor 为前景和背景的概率
         rpn_cls_score_reshape = self._reshape_layer(rpn_cls_score, 2,
                                                     'rpn_cls_score_reshape')
         rpn_cls_prob_reshape = self._softmax_layer(rpn_cls_score_reshape,
@@ -149,21 +161,27 @@ class vgg16(Network):
         # 把 rpn_cls_score_reshape 也返回是为了 rpn 层的训练
         return rpn_cls_prob, rpn_bbox_pred, rpn_cls_score, rpn_cls_score_reshape
 
-    # 使用经过 rpn 网络层后生成的 rpn_box_prob 把anchor位置进行第一次修正
+    # 使用经过 rpn 网络层后生成的 rpn_box_prob 把 anchor 位置进行第一次修正
     # 按照得分排序，取前12000个anchor，再nms, 取前面2000个
     def build_proposals(self, is_training, rpn_cls_prob, rpn_bbox_pred,
                         rpn_cls_score):
         if is_training:
-            # rois 为推荐的 anchors，roi_scroes 为推荐的 anchors 对应的得分概率(rpn_cls_prob中的)
+            # 第一次推荐，推荐的个数为 2000 个
+            # rois 为推荐的 anchors (经过修正后)，roi_scroes 为推荐的 anchors 对应的得分概率(rpn_cls_prob中的)
             rois, roi_scores = self._proposal_layer(rpn_cls_prob,
                                                     rpn_bbox_pred, "rois")
+
+            # 这个不是第二次推荐，而是制作为 rpn 网络训练的数据
             # rpn_labels 为每个 anchor 对应的前景背景分类
             rpn_labels = self._anchor_target_layer(rpn_cls_score, "anchor")
 
+            # 保证在 rpn_labels 计算完后，才进行该节点的计算
+            # 该步属于 proposal 的第二次推荐，这次推荐的会最终进入到 fast-rcnn 网络中
             with tf.control_dependencies([rpn_labels]):
                 rois, _ = self._proposal_target_layer(rois, roi_scores,
                                                       "rpn_rois")
         else:
+            # 在 test 的时候，如果为 top 模式，那么直接选取高得分的即可
             if cfg.FLAGS.test_mode == 'nms':
                 rois, _ = self._proposal_layer(rpn_cls_prob, rpn_bbox_pred,
                                                "rois")
@@ -177,6 +195,7 @@ class vgg16(Network):
     def build_predictions(self, net, rois, is_training, initializer,
                           initializer_bbox):
         # Crop image ROIs
+        # roi层，用于统一网络大小，net 即 conv——5, 网络即在这里被共享了起来
         pool5 = self._crop_pool_layer(net, rois, "pool5")
         pool5_flat = slim.flatten(pool5, scope="flatten")
 
@@ -191,6 +210,7 @@ class vgg16(Network):
             fc7 = slim.dropout(
                 fc7, keep_prob=0.5, is_training=True, scope='dropout7')
 
+        # 分类
         cls_score = slim.fully_connected(
             fc7,
             self._num_classes,
@@ -199,6 +219,8 @@ class vgg16(Network):
             activation_fn=None,
             scope='cls_score')
         cls_prob = self._softmax_layer(cls_score, "cls_score")
+
+        # bbox回归
         bbox_prediction = slim.fully_connected(
             fc7,
             self._num_classes * 4,

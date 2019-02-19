@@ -26,7 +26,7 @@ def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, 
 
     # 每次只会处理一张图片，取出原始图的 shape 信息，第一维是图片数量
     im_info = im_info[0]
-    # 取出RPN预测的框属于前景的分数，在18个channel中，前9个是框属于背景的概率，后9个才是属于前景的概率
+    # 取出 RPN 预测的框属于前景的分数，在18个channel中，前9个是框属于背景的概率，后9个才是属于前景的概率
     # 注意这个是人为定的哦，并没有绝对的哪个是哪个
     scores = rpn_cls_prob[:,:,:, num_anchors:]
     # 回归预测打平，为了之后与 前景score 一一对应
@@ -35,7 +35,7 @@ def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, 
 
     # 根据 rpn_bbox_pred 的回归修正 anchor
     proposals = bbox_transform_inv(anchors, rpn_bbox_pred)
-    # 修剪 anchor
+    # 修剪 anchor， 保证其在特征图内
     proposals = clip_boxes(proposals, im_info[:2])
 
     # 将 scores 打成一维然后获得从小到大的索引值，最后用 [::-1] 颠倒成从大到小
@@ -57,7 +57,8 @@ def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, 
     scores = scores[keep]
 
     # Only support single image as input
-    # 因为要进行roi_pooling，在保留框的坐标信息前面插入batch中图片的编号信息。此时，由于batch_size为1，因此都插入0
+    # 因为要进行roi_pooling，在保留框的坐标信息前面插入 batch 中图片的编号信息。此时，由于batch_size为1，因此都插入0
+    # 好吧，这一步根本没啥用。。因为每次都是只处理一张图
     batch_inds = np.zeros((proposals.shape[0], 1), dtype=np.float32)
     blob = np.hstack((batch_inds, proposals.astype(np.float32, copy=False)))
 

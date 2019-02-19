@@ -56,9 +56,9 @@ class Network(object):
             return tf.reshape(reshaped_score, input_shape)
         return tf.nn.softmax(bottom, name=name)
 
-    # 使用经过rpn网络层后生成的 rpn_bbox_prob 把 anchor 位置进行第一次修正
-    # 按照得分排序，取前12000个anchor，再nms,取前面2000个
-    # 但是这个数字在test的时候就变成了6000和300，这就是最后结果300个框的来源
+    # 使用经过 rpn 网络层后生成的 rpn_bbox_prob 把 anchor 位置进行第一次修正
+    # 按照得分排序，取前 12000 个anchor，再 nms,取前面 2000 个
+    # 但是这个数字在test的时候就变成了 6000 和 300，这就是最后结果 300 个框的来源
     def _proposal_layer(self, rpn_cls_prob, rpn_bbox_pred, name):
         with tf.variable_scope(name):
             rois, rpn_scores = tf.py_func(
@@ -67,12 +67,13 @@ class Network(object):
                 [tf.float32, tf.float32]
             )
 
-            # 5 的原因具体看 proposal_layer 最后
+            # shape 5 的原因具体看 proposal_layer 最后
             rois.set_shape([None, 5])
             rpn_scores.set_shape([None, 1])
 
         return rois, rpn_scores
 
+    # 为 rpn 网络的训练准备数据，包括最终进入 rpn 训练的 anchors（256个），它们的 bounding-Regression
     def _anchor_target_layer(self, rpn_cls_score, name):
         with tf.variable_scope(name):
             # 计算所有 anchor 对应的类型, 以及它们的 bounding-regression, 以及帮助计算 bbox-loss 的矩阵
@@ -89,6 +90,7 @@ class Network(object):
             rpn_bbox_outside_weights.set_shape([1, None, None, self._num_anchors * 4])
 
             rpn_labels = tf.to_int32(rpn_labels, name="to_int32")
+            # 训练所需数据缓存起来
             self._anchor_targets['rpn_labels'] = rpn_labels
             self._anchor_targets['rpn_bbox_targets'] = rpn_bbox_targets
             self._anchor_targets['rpn_bbox_inside_weights'] = rpn_bbox_inside_weights
@@ -98,7 +100,7 @@ class Network(object):
 
         return rpn_labels
 
-    # 获得属于最后的分类网络的label，使用的是 _proposal_layer 提供的数据，进行进一步的筛选
+    # 获得属于最后的分类网络的 label，使用的是 _proposal_layer 提供的数据，进行进一步的筛选
     def _proposal_target_layer(self, rois, roi_scores, name):
         with tf.variable_scope(name):
             rois, roi_scores, labels, bbox_targets, bbox_inside_weights, bbox_outside_weights = tf.py_func(
@@ -114,6 +116,7 @@ class Network(object):
             bbox_inside_weights.set_shape([cfg.FLAGS.batch_size, self._num_classes * 4])
             bbox_outside_weights.set_shape([cfg.FLAGS.batch_size, self._num_classes * 4])
 
+            # 缓存起来，供 fast-rcnn 网络使用
             self._proposal_targets['rois'] = rois
             self._proposal_targets['labels'] = tf.to_int32(labels, name="to_int32")
             self._proposal_targets['bbox_targets'] = bbox_targets
@@ -124,6 +127,7 @@ class Network(object):
 
             return rois, roi_scores
     
+    # 用于 test 时候的推荐 anchor 选取，直接选取高得分的即可
     def _proposal_top_layer(self, rpn_cls_prob, rpn_bbox_pred, name):
         with tf.variable_scope(name):
             rois, rpn_scores = tf.py_func(proposal_top_layer,
@@ -186,6 +190,7 @@ class Network(object):
 
         # list as many types of layers as possible, even if they are not used now
         # 使用 slim 提供的 arg_scope 来简化网络层参数的写法, 赋予一些默认参数
+        # 创建所有网络，包括 rpn 网络， fast-rcnn 网络
         with arg_scope(
             [slim.conv2d, slim.conv2d_in_plane, slim.conv2d_transpose, slim.separable_conv2d, slim.fully_connected],
             weights_regularizer=weights_regularizer,
@@ -194,6 +199,8 @@ class Network(object):
         ):
             rois, cls_prob, bbox_pred = self.build_network(sess, training)
 
+        # rois 是最终进入 fast-rcnn 网络的 anchor
+        # 将 _predictions 缓存起来，供 train.py 调用
         layers_to_output = {'rois': rois}
         layers_to_output.update(self._predictions)
 
@@ -206,6 +213,7 @@ class Network(object):
             self._predictions["bbox_pred"] *= stds
             self._predictions["bbox_pred"] += means
         else:
+            # 训练模式下生成损失函数
             self._add_losses()
             layers_to_output.update(self._losses)
 
@@ -227,25 +235,30 @@ class Network(object):
 
         return layers_to_output
 
+    # 在 conv5 给予的特征图上提取 anchors，注意 anchors 的位置是原始图的上面的哦
     def _anchor_component(self):
         with tf.variable_scope('ANCHOR_' + 'default'):
             # just to get the shape right
+            # 精确获得进入 vgg16 网络前图片的大小（不是原图哦）
             height = tf.to_int32(tf.ceil(self._im_info[0, 0] / np.float32(self._feat_stride[0])))
             width = tf.to_int32(tf.ceil(self._im_info[0, 1] / np.float32(self._feat_stride[0])))
+            # 生成 conv_5 视野下的所有点对应的 anchor，anchors 是二维，shape 为 [height * width * 9, 4]
             anchors, anchors_length = tf.py_func(
                 generate_anchors_pre,
                 [height, width, self._feat_stride, self._anchor_scales, self._anchor_ratios],
                 [tf.float32, tf.int32], name="generate_anchors"
             )
-
+            # 必须的操作，经测试发现不重新 set_shape 一遍训练会出错
             anchors.set_shape([None, 4])
             anchors_length.set_shape([])
+            # 挂载生成的 anchors
             self._anchors = anchors
             self.anchors_length = anchors_length
 
     def build_network(self, sess, training):
         raise NotImplementedError
     
+    # bbox-regression 的损失函数
     def _smooth_l1_loss(self, bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights, sigma=1.0, dim=[1]):
         sigma_2 = sigma ** 2
         box_diff = bbox_pred - bbox_targets
@@ -260,6 +273,7 @@ class Network(object):
         ))
         return loss_box
 
+    # 生成损失函数
     def _add_losses(self, sigma_rpn=3.0):
         with tf.variable_scope('loss_' + self._tag):
             # RPN, class loss
@@ -268,8 +282,10 @@ class Network(object):
             # 注意真正进行了loss计算的只有那 256 个 anchor
             rpn_cls_score = tf.reshape(self._predictions['rpn_cls_score_reshape'], [-1, 2])
             rpn_label = tf.reshape(self._anchor_targets['rpn_labels'], [-1])
+            # 非背景和非前景均忽略
             rpn_select = tf.where(tf.not_equal(rpn_label, -1))
 
+            # 利用 gather 选取出来要训练的数据
             rpn_cls_score = tf.reshape(tf.gather(rpn_cls_score, rpn_select), [-1, 2])
             rpn_label = tf.reshape(tf.gather(rpn_label, rpn_select), [-1])
             # 使用 sparse_softmax_cross_entropy_with_logits, 可以直接传 [batch_size, 1] 形状的 label

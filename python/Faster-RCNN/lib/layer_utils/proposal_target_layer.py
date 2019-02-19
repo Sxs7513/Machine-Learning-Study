@@ -4,14 +4,15 @@ from __future__ import print_function
 
 import numpy as np
 import numpy.random as npr
-from cython_bbox import bbox_overlaps
+from lib.utils.cython_bbox import bbox_overlaps
+# from cython_bbox import bbox_overlaps
 
 from lib.config import config as cfg
 from lib.utils.bbox_transform import bbox_transform
 
-# 因为之前的anchor位置已经修正过了，所以这里又计算了一次经过 proposal_layer 修正后的的box与 GT的IOU来得到label
+# 因为之前的 anchor 位置已经修正过了，所以这里又计算了一次经过 proposal_layer 修正后的的 box 与 GT 的 IOU 来得到 label
 # 但是阈值不一样了，变成了大于等于0.5为1，小于为0，并且这里得到的正样本很少，通常只有2-20个，甚至有0个
-# 并且正样本最多为64个，负样本则有比较多个；相应的也重新计算了一次bbox_targets
+# 并且正样本最多为64个，负样本则有比较多个，相应的也重新计算了一次bbox_targets
 def proposal_target_layer(rpn_rois, rpn_scores, gt_boxes, _num_classes):
     all_rois = rpn_rois
     all_scores = rpn_scores
@@ -26,6 +27,7 @@ def proposal_target_layer(rpn_rois, rpn_scores, gt_boxes, _num_classes):
     
     num_images = 1
     rois_per_image = cfg.FLAGS.batch_size / num_images
+    # 正面样本要求的个数， 256 * 0.25
     fg_rois_per_image = np.round(cfg.FLAGS.proposal_fg_fraction * rois_per_image)
 
     labels, rois, roi_scores, bbox_targets, bbox_inside_weights = _sample_rois(
@@ -42,7 +44,7 @@ def proposal_target_layer(rpn_rois, rpn_scores, gt_boxes, _num_classes):
 
     return rois, roi_scores, labels, bbox_targets, bbox_inside_weights, bbox_outside_weights
 
-
+# 从 all_rois 再次选取，与 anchor-target_layer 一样
 def _sample_rois(all_rois, all_scores, gt_boxes, fg_rois_per_image, rois_per_image, num_classes):
     overlaps = bbox_overlaps(
         np.ascontiguousarray(all_rois[:, 1:5], dtype=np.float),
