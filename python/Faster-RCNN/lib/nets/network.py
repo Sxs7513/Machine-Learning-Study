@@ -140,7 +140,7 @@ class Network(object):
         return rois, rpn_scores
 
     # 没有用论文里的 roi-polling，而是直接 resize-crop 了
-    # bottom 就是共享的 conv_5 网络
+    # bottom 就是共享的 conv_5 网络的输出
     def _crop_pool_layer(self, bottom, rois, name):
         with tf.variable_scope(name):
             batch_ids = tf.squeeze(tf.slice(rois, [0, 0], [-1, 1], name="batch_id"), [1])
@@ -335,16 +335,28 @@ class Network(object):
     def train_step(self, sess, blobs, train_op):
         feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
                      self._gt_boxes: blobs['gt_boxes']}
-        rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss, _ = sess.run(
+        rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss, _, _ = sess.run(
             [self._losses["rpn_cross_entropy"],
             self._losses['rpn_loss_box'],
             self._losses['cross_entropy'],
             self._losses['loss_box'],
             self._losses['total_loss'],
-            train_op],
+            train_op,
+            tf.Print(self._predictions["bbox_pred"], [tf.shape(self._predictions["bbox_pred"])])],
             feed_dict=feed_dict
         )
+
         return rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss
+
+    def test_image(self, sess, image, im_info):
+        feed_dict = {self._image: image, self._im_info: im_info}
+
+        cls_score, cls_prob, bbox_pred, rois = sess.run([self._predictions["cls_score"],
+                                                         self._predictions['cls_prob'],
+                                                         self._predictions['bbox_pred'],
+                                                         self._predictions['rois']],
+                                                        feed_dict=feed_dict)
+        return cls_score, cls_prob, bbox_pred, rois
 
     # Summaries #
     def _add_image_summary(self, image, boxes):

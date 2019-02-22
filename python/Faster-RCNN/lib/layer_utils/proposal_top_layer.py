@@ -8,6 +8,7 @@ import numpy.random as npr
 from lib.config import config as cfg
 from lib.utils.bbox_transform import bbox_transform_inv, clip_boxes
 
+# 在测试模式下，选取进入 fast-RCNN 的 anchors
 def proposal_top_layer(rpn_cls_prob, rpn_bbox_pred, im_info, _feat_stride, anchors, num_anchors):
     rpn_top_n = cfg.FLAGS.rpn_top_n
     im_info = im_info[0]

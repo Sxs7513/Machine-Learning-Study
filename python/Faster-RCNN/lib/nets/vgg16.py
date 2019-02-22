@@ -56,7 +56,7 @@ class vgg16(Network):
             self._predictions["cls_prob"] = cls_prob
             self._predictions["bbox_pred"] = bbox_pred
             self._predictions["rois"] = rois
-
+            
             self._score_summaries.update(self._predictions)
 
             return rois, cls_prob, bbox_pred
@@ -220,7 +220,7 @@ class vgg16(Network):
             scope='cls_score')
         cls_prob = self._softmax_layer(cls_score, "cls_score")
 
-        # bbox回归
+        # bbox回归，注意输出的神经元是 _num_classes * 4，即对每个类别做一个回归分析
         bbox_prediction = slim.fully_connected(
             fc7,
             self._num_classes * 4,
