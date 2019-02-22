@@ -77,9 +77,8 @@ class Train:
             momentum = cfg.FLAGS.momentum
             optimizer = tf.train.MomentumOptimizer(lr, momentum)
 
-            # 损失函数梯度计算
+            # 损失函数自动求导
             gvs = optimizer.compute_gradients(loss)
-
             train_op = optimizer.apply_gradients(gvs)
 
         # Load weights
@@ -129,7 +128,11 @@ class Train:
             # Display training information
             if iter % (cfg.FLAGS.display) == 0:
                 print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
+<<<<<<< HEAD
                       '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> cur_time %s ' % \
+=======
+                      '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> cur_time: %s\n' % \
+>>>>>>> 6cf0ee7fbb1a4e2dc04d3cbe8e40fd71bc5f27c8
                       (iter, cfg.FLAGS.max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))))
                 print('speed: {:.3f}s / iter'.format(timer.average_time))
 
