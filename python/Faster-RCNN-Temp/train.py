@@ -71,7 +71,6 @@ class Train:
         self.data_layer = RoIDataLayer(self.roidb, self.imdb.num_classes)
         self.output_dir = cfg.get_output_dir(self.imdb, 'default')
 
-
     def train(self):
 
         # Create session

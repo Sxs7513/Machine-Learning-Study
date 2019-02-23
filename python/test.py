@@ -1,10 +1,11 @@
-from sklearn.linear_model import Ridge
-import numpy as np
-n_samples, n_features = 10, 5
-np.random.seed(0)
-y = np.random.randn(n_samples, 2)
-X = np.random.randn(n_samples, n_features)
+import tensorflow as tf
 
-clf = Ridge(alpha=1.0)
-clf.fit(X, y) 
-print(clf.predict([[1,2,3,4,5]]))
+a = tf.test.is_built_with_cuda()  # 判断CUDA是否可以用
+
+b = tf.test.is_gpu_available(
+    cuda_only=False,
+    min_cuda_compute_capability=None
+)                                  # 判断GPU是否可以用
+
+print(a)
+print(b)

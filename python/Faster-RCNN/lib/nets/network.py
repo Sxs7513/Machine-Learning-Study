@@ -303,6 +303,7 @@ class Network(object):
                                                 rpn_bbox_outside_weights, sigma=sigma_rpn, dim=[1, 2, 3])
 
             # RCNN, class loss
+            # 同理
             cls_score = self._predictions["cls_score"]
             label = tf.reshape(self._proposal_targets["labels"], [-1])
             cross_entropy = tf.reduce_mean(
@@ -325,6 +326,7 @@ class Network(object):
             self._losses['rpn_cross_entropy'] = rpn_cross_entropy
             self._losses['rpn_loss_box'] = rpn_loss_box
 
+            # 总损失函数
             loss = cross_entropy + loss_box + rpn_cross_entropy + rpn_loss_box
             self._losses['total_loss'] = loss
 
@@ -332,6 +334,8 @@ class Network(object):
 
         return loss
 
+    # 训练函数，计算四个损失函数的过程中，等于前向传播
+    # train_op 即为自动求导，反向传播过程
     def train_step(self, sess, blobs, train_op):
         feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
                      self._gt_boxes: blobs['gt_boxes']}
