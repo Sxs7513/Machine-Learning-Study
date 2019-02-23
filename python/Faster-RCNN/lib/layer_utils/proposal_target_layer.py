@@ -13,6 +13,9 @@ from lib.utils.bbox_transform import bbox_transform
 # 因为之前的 anchor 位置已经修正过了，所以这里又计算了一次经过 proposal_layer 修正后的的 box 与 GT 的 IOU 来得到 label
 # 但是阈值不一样了，变成了大于等于0.5为1，小于为0，并且这里得到的正样本很少，通常只有2-20个，甚至有0个
 # 并且正样本最多为64个，负样本则有比较多个，相应的也重新计算了一次bbox_targets
+
+# 产生筛选后的 roi，对应labels，三个(len(rois), 4*21)大小的矩阵，其中一个对fg-roi对应引索行的对应类别的4个位置填上（dx,dy,dw,dh）
+# 另两个对fg-roi对应引索行的对应类别的4个位置填上（1,1,1,1）
 def proposal_target_layer(rpn_rois, rpn_scores, gt_boxes, _num_classes):
     all_rois = rpn_rois
     all_scores = rpn_scores
@@ -38,6 +41,7 @@ def proposal_target_layer(rpn_rois, rpn_scores, gt_boxes, _num_classes):
     rois = rois.reshape(-1, 5)
     roi_scores = roi_scores.reshape(-1)
     labels = labels.reshape(-1, 1)
+    # bbox_targets的列是类别数 * 4哦
     bbox_targets = bbox_targets.reshape(-1, _num_classes * 4)
     bbox_inside_weights = bbox_inside_weights.reshape(-1, _num_classes * 4)
     bbox_outside_weights = np.array(bbox_inside_weights > 0).astype(np.float32)
@@ -85,6 +89,7 @@ def _sample_rois(all_rois, all_scores, gt_boxes, fg_rois_per_image, rois_per_ima
     rois = all_rois[keep_inds]
     roi_scores = all_scores[keep_inds]
 
+    # 计算回归值，构建一个 label => regression 的矩阵
     bbox_target_data = _compute_targets(
         rois[:, 1:5], gt_boxes[gt_assignment[keep_inds], :4], labels
     )
@@ -96,7 +101,7 @@ def _sample_rois(all_rois, all_scores, gt_boxes, fg_rois_per_image, rois_per_ima
 
 def _get_bbox_regression_labels(bbox_target_data, num_classes):
     clss = bbox_target_data[:, 0]
-    # 每个 clss 对应的回归
+    # (len(rois), 4*21)
     bbox_targets = np.zeros((clss.size, 4 * num_classes), dtype=np.float32)
     bbox_inside_weights = np.zeros(bbox_targets.shape, dtype=np.float32)
     inds = np.where(clss > 0)[0]
@@ -104,8 +109,11 @@ def _get_bbox_regression_labels(bbox_target_data, num_classes):
         cls = clss[ind]
         start = int(4 * cls)
         end = start + 4
+        # 对 fg-roi 对应引索行的对应类别的4个位置填上（dx,dy,dw,dh）
+        # 注意，允许有 0 存在哦，即 rois 对该类别是 0 regession
         bbox_targets[ind, start:end] = bbox_target_data[ind, 1:]
         bbox_inside_weights[ind, start:end] = cfg.FLAGS2["bbox_inside_weights"]
+    
     return bbox_targets, bbox_inside_weights
 
 

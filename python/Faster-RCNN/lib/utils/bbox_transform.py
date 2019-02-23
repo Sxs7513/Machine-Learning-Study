@@ -5,7 +5,7 @@ from __future__ import print_function
 import numpy as np
 import lib.config.config as cfg
 
-# ex_rois 为提取的 anchors， gt_rois 为 bbox-pred
+# ex_rois 为提取的 anchors， gt_rois 为 truth框
 def bbox_transform(ex_rois, gt_rois):
     # 获得 anchor 的宽度，与中心位置
     ex_widths = ex_rois[:, 2] - ex_rois[:, 0] + 1.0
@@ -41,7 +41,8 @@ def bbox_transform_inv(boxes, deltas):
     ctr_x = boxes[:, 0] + 0.5 * widths
     ctr_y = boxes[:, 1] + 0.5 * heights
 
-    # ::4代表每隔四个取一个，这里应该只是为了保险
+    # ::4代表每隔四个取一个, 这是因为 train 与 test 的 deltas 格式不一样
+    # 所以用这种形式来取，保证两种格式均可以取到
     dx = deltas[:, 0::4]
     dy = deltas[:, 1::4]
     dw = deltas[:, 2::4]
@@ -56,6 +57,7 @@ def bbox_transform_inv(boxes, deltas):
     pred_w = np.exp(dw) * widths[:, np.newaxis]
     pred_h = np.exp(dh) * heights[:, np.newaxis]
 
+    # pred_boxes 的格式为 deltas 的，注意哦很重要
     pred_boxes = np.zeros(deltas.shape, dtype=deltas.dtype)
     # x1
     pred_boxes[:, 0::4] = pred_ctr_x - 0.5 * pred_w
