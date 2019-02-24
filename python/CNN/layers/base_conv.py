@@ -58,7 +58,8 @@ class Conv2D(object):
             col_image_i = im2col(img_i, self.ksize, self.stride)
             # dot 是用来进行图里的点乘操作的，然后将其还原为类似于参数 x 里的这样形式
             # 目的是方便之后的池化层操作,并且在回来的反向传播时候,方便计算
-            conv_out[i] = np.reshape(np.dot(col_image_i, col_weights), self.eta[0].shape)
+            # 直接加 bias 的原因可以看 output-features 的形状
+            conv_out[i] = np.reshape(np.dot(col_image_i, col_weights) + self.bias, self.eta[0].shape)
             self.col_image.append(col_image_i)
         
         self.col_image = np.array(self.col_image)

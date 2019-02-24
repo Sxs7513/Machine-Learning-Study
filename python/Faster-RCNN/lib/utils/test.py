@@ -67,7 +67,7 @@ def im_detect(sess, net, im):
 
     # 还原回原始的体积
     boxes = rois[:, 1:5] / im_scales[0]
-    # 打平，注意哦，这里是把 bachsize 打平了哈哈
+    # 打平，具体看 vgg16.py 的 build_predictions
     scores = np.reshape(scores, [scores.shape[0], -1])
     bbox_pred = np.reshape(bbox_pred, [bbox_pred.shape[0], -1])
 

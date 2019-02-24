@@ -141,6 +141,8 @@ class Network(object):
 
     # 没有用论文里的 roi-polling，而是直接 resize-crop 了
     # bottom 就是共享的 conv_5 网络的输出
+    # 从网路的输出中，从 rois 坐标中截取并 resize 成相同的大小
+    # 输出的 shape 为 (256, 7, 7, 512)， 256 为 rois 的个数，512 为 conv_5 的输出特征图个数
     def _crop_pool_layer(self, bottom, rois, name):
         with tf.variable_scope(name):
             batch_ids = tf.squeeze(tf.slice(rois, [0, 0], [-1, 1], name="batch_id"), [1])
@@ -335,14 +337,13 @@ class Network(object):
     def train_step(self, sess, blobs, train_op):
         feed_dict = {self._image: blobs['data'], self._im_info: blobs['im_info'],
                      self._gt_boxes: blobs['gt_boxes']}
-        rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss, _, _ = sess.run(
+        rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, loss, _ = sess.run(
             [self._losses["rpn_cross_entropy"],
             self._losses['rpn_loss_box'],
             self._losses['cross_entropy'],
             self._losses['loss_box'],
             self._losses['total_loss'],
-            train_op,
-            tf.Print(self._predictions["bbox_pred"], [tf.shape(self._predictions["bbox_pred"])])],
+            train_op],
             feed_dict=feed_dict
         )
 

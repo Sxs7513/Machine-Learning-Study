@@ -6,6 +6,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 import numpy as np
 import tensorflow as tf
 from tensorflow.python import pywrap_tensorflow
+from tensorflow.python import debug as tf_debug
 from pprint import pprint
 
 import lib.config.config as cfg
@@ -67,6 +68,7 @@ class Train:
         tfconfig = tf.ConfigProto(allow_soft_placement=True)
         tfconfig.gpu_options.allow_growth = True
         sess = tf.Session(config=tfconfig)
+        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
         with sess.graph.as_default():
 
@@ -127,12 +129,12 @@ class Train:
 
             # Display training information
             if iter % (cfg.FLAGS.display) == 0:
+                print(self.net._image)
+                print(self.net.net)
+                print(self.net.pool5)
+                print(self.net.pool5_flat)
                 print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
-<<<<<<< HEAD
-                      '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> cur_time %s ' % \
-=======
                       '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> cur_time: %s\n' % \
->>>>>>> 6cf0ee7fbb1a4e2dc04d3cbe8e40fd71bc5f27c8
                       (iter, cfg.FLAGS.max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))))
                 print('speed: {:.3f}s / iter'.format(timer.average_time))
 
