@@ -37,7 +37,7 @@ tf.app.flags.DEFINE_string('initializer', "truncated", "Network initialization p
 tf.app.flags.DEFINE_string('pretrained_model', "./data/imagenet_weights/vgg16.ckpt", "Pretrained network weights")
 
 tf.app.flags.DEFINE_boolean('bias_decay', False, "Whether to have weight decay on bias as well")
-tf.app.flags.DEFINE_boolean('double_bias', True, "Whether to double the learning rate for bias")
+tf.app.flags.DEFINE_boolean('double_bias', False, "Whether to double the learning rate for bias")
 tf.app.flags.DEFINE_boolean('use_all_gt', True, "Whether to use all ground truth bounding boxes for training, "
                                                 "For COCO, setting USE_ALL_GT to False will exclude boxes that are flagged as ''iscrowd''")
 tf.app.flags.DEFINE_integer('max_size', 1000, "Max pixel size of the longest side of a scaled input image")

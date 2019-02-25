@@ -109,6 +109,7 @@ if __name__ == "__main__":
 
     demonet = args.demo_net
     dataset = args.dataset
+    # tfmodel = os.path.join('output', demonet, DATASETS[dataset][0], 'default', NETS[demonet][0])
     tfmodel = os.path.join('default', NETS[demonet][0])
     
     # set config

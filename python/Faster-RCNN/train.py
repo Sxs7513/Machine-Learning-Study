@@ -176,9 +176,9 @@ class Train:
                 print('speed: {:.3f}s / iter'.format(timer.average_time))
 
             if iter % cfg.FLAGS.snapshot_iterations == 0:
-                self.snapshot(sess, iter)
                 dataframe = pd.DataFrame({'total_loss': total_loss_store, 'rpn_loss_cls': rpn_loss_cls_store, 'rpn_loss_box': rpn_loss_box_store, 'loss_cls': loss_cls_store, 'loss_box': loss_box_store})
                 dataframe.to_csv("loss_record/loss%d.csv" % (iter))
+                self.snapshot(sess, iter)
 
     def get_variables_in_checkpoint_file(self, file_name):
         try:
