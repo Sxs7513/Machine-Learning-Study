@@ -43,7 +43,7 @@ tf.app.flags.DEFINE_boolean('use_all_gt', True, "Whether to use all ground truth
 tf.app.flags.DEFINE_integer('max_size', 1000, "Max pixel size of the longest side of a scaled input image")
 tf.app.flags.DEFINE_integer('test_max_size', 1000, "Max pixel size of the longest side of a scaled input image")
 tf.app.flags.DEFINE_integer('ims_per_batch', 1, "Images to use per minibatch")
-tf.app.flags.DEFINE_integer('snapshot_iterations', 5000, "Iteration to take snapshot")
+tf.app.flags.DEFINE_integer('snapshot_iterations', 200, "Iteration to take snapshot")
 
 FLAGS2["scales"] = (600,)
 FLAGS2["test_scales"] = (600,)
@@ -113,7 +113,7 @@ def get_output_dir(imdb, weights_filename):
     A canonical path is built using the name from an imdb and a network
     (if not None).
     """
-    outdir = osp.abspath(osp.join(FLAGS2["root_dir"], FLAGS2["root_dir"] , 'default', imdb.name))
+    outdir = osp.abspath(osp.join(FLAGS2["root_dir"], 'default', imdb.name))
     if weights_filename is None:
         weights_filename = 'default'
     outdir = osp.join(outdir, weights_filename)

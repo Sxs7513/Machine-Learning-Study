@@ -6,7 +6,9 @@ os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 import numpy as np
 import tensorflow as tf
 from tensorflow.python import pywrap_tensorflow
+from tensorflow.python import debug as tf_debug
 from pprint import pprint
+import pandas as pd
 
 import lib.config.config as cfg
 from lib.datasets.factory import get_imdb
@@ -75,6 +77,7 @@ class Train:
         tfconfig.gpu_options.per_process_gpu_memory_fraction = 0.8
         tfconfig.gpu_options.allow_growth = True
         sess = tf.Session(config=tfconfig)
+        # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
         with sess.graph.as_default():
 
@@ -89,7 +92,6 @@ class Train:
 
             # 损失函数自动求导
             gvs = optimizer.compute_gradients(loss)
-
             # Double bias
             # Double the gradient of the bias if set
             if cfg.FLAGS.double_bias:
@@ -106,7 +108,6 @@ class Train:
             else:
                 train_op = optimizer.apply_gradients(gvs)
 
-            # We will handle the snapshots ourselves
             self.saver = tf.train.Saver(max_to_keep=100000)
 
         # Load weights
@@ -132,6 +133,11 @@ class Train:
         timer = Timer()
         iter = last_snapshot_iter + 1
         last_summary_time = time.time()
+        total_loss_store = []
+        loss_box_store = []
+        loss_cls_store = []
+        rpn_loss_cls_store = []
+        rpn_loss_box_store = []
 
         while iter < cfg.FLAGS.max_iters + 1:
             # Learning rate
@@ -155,6 +161,12 @@ class Train:
             timer.toc()
             iter += 1
 
+            total_loss_store.append(total_loss)
+            loss_cls_store.append(loss_cls)
+            loss_box_store.append(loss_box)
+            rpn_loss_cls_store.append(rpn_loss_cls)
+            rpn_loss_box_store.append(rpn_loss_box)
+
             # Display training information
             if iter % (cfg.FLAGS.display) == 0:
                 print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
@@ -164,7 +176,9 @@ class Train:
                 print('speed: {:.3f}s / iter'.format(timer.average_time))
 
             if iter % cfg.FLAGS.snapshot_iterations == 0:
-                self.snapshot(sess, iter )
+                self.snapshot(sess, iter)
+                dataframe = pd.DataFrame({'total_loss': total_loss_store, 'rpn_loss_cls': rpn_loss_cls_store, 'rpn_loss_box': rpn_loss_box_store, 'loss_cls': loss_cls_store, 'loss_box': loss_box_store})
+                dataframe.to_csv("loss_record/loss%d.csv" % (iter))
 
     def get_variables_in_checkpoint_file(self, file_name):
         try:

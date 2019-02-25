@@ -151,7 +151,8 @@ class vgg16(Network):
         # bounding regression 回归层
         rpn_bbox_pred = slim.conv2d(
             rpn,
-            self._num_anchors * 4, [1, 1],
+            self._num_anchors * 4, 
+            [1, 1],
             trainable=is_training,
             weights_initializer=initializer,
             padding='VALID',
@@ -195,7 +196,8 @@ class vgg16(Network):
     def build_predictions(self, net, rois, is_training, initializer,
                           initializer_bbox):
         # Crop image ROIs
-        # roi层，用于统一网络大小，net 即 conv——5, 网络即在这里被共享了起来
+        # roi层，用于统一网络大小，net 即 conv_5, 网络即在这里被共享了起来
+        # 一定要看下 _crop_pool_layer，输出的 shape 有学问
         pool5 = self._crop_pool_layer(net, rois, "pool5")
         pool5_flat = slim.flatten(pool5, scope="flatten")
 

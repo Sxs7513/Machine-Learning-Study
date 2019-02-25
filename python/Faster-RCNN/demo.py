@@ -7,6 +7,8 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL']='2'
 
 import cv2
+# import matplotlib
+# matplotlib.use('TkAgg') 
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
@@ -39,12 +41,47 @@ def parse_args():
     return args
 
 
+def vis_detections(im, class_name, dets, thresh=0.5):
+    # 首先筛选出该类别可能性在 thresh 以上的框
+    inds = np.where(dets[:, -1] >= thresh)[0]
+    if len(inds) == 0:
+        return
+
+    # 图片的 rgb 转换为 bgr
+    im = im[:, :, (2, 1, 0)]
+    fig, ax = plt.subplots(figsize=(12, 12))
+    ax.imshow(im, aspect='equal')
+    for i in inds:
+        bbox = dets[i, :4]
+        score = dets[i, -1]
+
+        ax.add_patch(
+            plt.Rectangle((bbox[0], bbox[1]),
+                          bbox[2] - bbox[0],
+                          bbox[3] - bbox[1], fill=False,
+                          edgecolor='red', linewidth=3.5)
+        )
+        ax.text(bbox[0], bbox[1] - 2,
+                '{:s} {:.3f}'.format(class_name, score),
+                bbox=dict(facecolor='blue', alpha=0.5),
+                fontsize=14, color='white')
+
+    ax.set_title(('{} detections with '
+                  'p({} | box) >= {:.1f}').format(class_name, class_name,
+                                                  thresh),
+                 fontsize=14)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.draw()
+    plt.show()
+
+
 def demo(sess, net, image_name):
-    im_file = os.path.join(cfg.FLAGS2["data_dir"], demo, image_name)
+    im_file = os.path.join(cfg.FLAGS2["data_dir"], 'demo', image_name)
     im = cv2.imread(im_file)
 
     # 获得所有推荐框以及它们的得分
-    time = Timer()
+    timer = Timer()
     timer.tic()
     scores, boxes = im_detect(sess, net, im)
     timer.toc()
@@ -54,14 +91,17 @@ def demo(sess, net, image_name):
     CONF_THRESH = 0.1
     # 非极大值抑制的阀值
     NMS_THRESH = 0.1
-    # 针对每一类做nms
+    # 针对每一类做nms，类别总共有 20 类，样本数为 300
     for cls_ind, cls in enumerate(CLASSES[1:]):
         cls_ind += 1  # because we skipped background
-        # 
+        # 回归
         cls_boxes = boxes[:, 4 * cls_ind:4 * (cls_ind + 1)]
-        # 
+        # 得分
         cls_scores = scores[:, cls_ind]
-
+        dets = np.hstack((cls_boxes, cls_scores[:, np.newaxis])).astype(np.float32)
+        keep = nms(dets, NMS_THRESH)
+        dets = dets[keep, :]
+        vis_detections(im, cls, dets, thresh=CONF_THRESH)
 
 
 if __name__ == "__main__":
@@ -84,15 +124,14 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError
 
-    # net.create_architecture(sess, "Train", 21, tag='default', anchor_scales=[8, 16, 32])
-    # saver = tf.train.Saver()
-    # saver.restore(sess, tfmodel)
+    net.create_architecture(sess, "TEST", 21, tag='default', anchor_scales=[8, 16, 32])
+    saver = tf.train.Saver()
+    saver.restore(sess, tfmodel)
 
-    # print('Loaded network {:s}'.format(tfmodel))
+    print('Loaded network {:s}'.format(tfmodel))
 
-    # im_names = ['000456.jpg', '000457.jpg', '000542.jpg', '001150.jpg',
-    #             '001763.jpg', '004545.jpg']
-    # for im_name in im_names:
-    #     print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-    #     print('Demo for data/demo/{}'.format(im_name))
-    #     demo(sess, net, im_name)
+    im_names = ['000456.jpg']
+    for im_name in im_names:
+        print('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        print('Demo for data/demo/{}'.format(im_name))
+        demo(sess, net, im_name)
