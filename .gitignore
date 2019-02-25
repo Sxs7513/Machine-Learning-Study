@@ -10,4 +10,7 @@ python/R-CNN/svm_train/1/
 python/R-CNN/svm_train/2/
 
 python/Faster-RCNN/data/imagenet_weights
-python/Faster-RCNN/data/VOCDevkit2007
+python/Faster-RCNN/data/VOCdevkit2007
+python/Faster-RCNN/default
+
+python/YOLO_v2/data/Pascal_voc

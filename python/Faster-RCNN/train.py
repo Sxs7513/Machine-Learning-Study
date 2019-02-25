@@ -8,6 +8,7 @@ import tensorflow as tf
 from tensorflow.python import pywrap_tensorflow
 from tensorflow.python import debug as tf_debug
 from pprint import pprint
+import pandas as pd
 
 import lib.config.config as cfg
 from lib.datasets.factory import get_imdb
@@ -16,6 +17,13 @@ from lib.datasets import roidb as rdl_roidb
 from lib.nets.vgg16 import vgg16
 from lib.layer_utils.roi_data_layer import RoIDataLayer
 from lib.utils.timer import Timer
+
+try:
+  import cPickle as pickle
+except ImportError:
+  import pickle
+import os
+
 
 # Returns a roidb (Region of Interest database) for use in training.
 def get_training_roidb(imdb):
@@ -61,6 +69,7 @@ class Train:
         self.imdb, self.roidb = combined_roidb("voc_2007_trainval")
 
         self.data_layer = RoIDataLayer(self.roidb, self.imdb.num_classes)
+        self.output_dir = cfg.get_output_dir(self.imdb, 'default')
 
     def train(self):
 
@@ -81,7 +90,23 @@ class Train:
 
             # 损失函数自动求导
             gvs = optimizer.compute_gradients(loss)
-            train_op = optimizer.apply_gradients(gvs)
+            # Double bias
+            # Double the gradient of the bias if set
+            if cfg.FLAGS.double_bias:
+                final_gvs = []
+                with tf.variable_scope('Gradient_Mult'):
+                    for grad, var in gvs:
+                        scale = 1.
+                        if cfg.FLAGS.double_bias and '/biases:' in var.name:
+                            scale *= 2.
+                        if not np.allclose(scale, 1.0):
+                            grad = tf.multiply(grad, scale)
+                        final_gvs.append((grad, var))
+                train_op = optimizer.apply_gradients(final_gvs)
+            else:
+                train_op = optimizer.apply_gradients(gvs)
+
+            self.saver = tf.train.Saver(max_to_keep=100000)
 
         # Load weights
         # Fresh train directly from ImageNet weights
@@ -105,6 +130,11 @@ class Train:
         timer = Timer()
         iter = last_snapshot_iter + 1
         last_summary_time = time.time()
+        total_loss_store = []
+        loss_box_store = []
+        loss_cls_store = []
+        rpn_loss_cls_store = []
+        rpn_loss_box_store = []
 
         while iter < cfg.FLAGS.max_iters + 1:
             # Learning rate
@@ -127,19 +157,23 @@ class Train:
             timer.toc()
             iter += 1
 
+            total_loss_store.append(total_loss)
+            loss_cls_store.append(loss_cls)
+            loss_box_store.append(loss_box)
+            rpn_loss_cls_store.append(rpn_loss_cls)
+            rpn_loss_box_store.append(rpn_loss_box)
+
             # Display training information
             if iter % (cfg.FLAGS.display) == 0:
-                print(self.net._image)
-                print(self.net.net)
-                print(self.net.pool5)
-                print(self.net.pool5_flat)
                 print('iter: %d / %d, total loss: %.6f\n >>> rpn_loss_cls: %.6f\n '
                       '>>> rpn_loss_box: %.6f\n >>> loss_cls: %.6f\n >>> loss_box: %.6f\n >>> cur_time: %s\n' % \
                       (iter, cfg.FLAGS.max_iters, total_loss, rpn_loss_cls, rpn_loss_box, loss_cls, loss_box, time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time()))))
                 print('speed: {:.3f}s / iter'.format(timer.average_time))
 
             if iter % cfg.FLAGS.snapshot_iterations == 0:
-                self.snapshot(sess, iter )
+                self.snapshot(sess, iter)
+                dataframe = pd.DataFrame({'total_loss': total_loss_store, 'rpn_loss_cls': rpn_loss_cls_store, 'rpn_loss_box': rpn_loss_box_store, 'loss_cls': loss_cls_store, 'loss_box': loss_box_store})
+                dataframe.to_csv("loss_record/loss%d.csv" % (iter))
 
     def get_variables_in_checkpoint_file(self, file_name):
         try:
@@ -152,7 +186,36 @@ class Train:
                 print("It's likely that your checkpoint file has been compressed "
                       "with SNAPPY.")
 
+    def snapshot(self, sess, iter):
+        net = self.net
 
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+
+        # Store the model snapshot
+        filename = 'vgg16_faster_rcnn_iter_{:d}'.format(iter) + '.ckpt'
+        filename = os.path.join(self.output_dir, filename)
+        self.saver.save(sess, filename)
+        print('Wrote snapshot to: {:s}'.format(filename))
+
+        # Also store some meta information, random state, etc.
+        nfilename = 'vgg16_faster_rcnn_iter_{:d}'.format(iter) + '.pkl'
+        nfilename = os.path.join(self.output_dir, nfilename)
+        # current state of numpy random
+        st0 = np.random.get_state()
+        # current position in the database
+        cur = self.data_layer._cur
+        # current shuffled indeces of the database
+        perm = self.data_layer._perm
+
+        # Dump the meta info
+        with open(nfilename, 'wb') as fid:
+            pickle.dump(st0, fid, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(cur, fid, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(perm, fid, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(iter, fid, pickle.HIGHEST_PROTOCOL)
+
+        return filename, nfilename
 
 if __name__ == "__main__":
     train = Train()

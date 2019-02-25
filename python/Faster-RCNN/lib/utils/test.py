@@ -47,6 +47,19 @@ def _get_image_blob(im):
     return blob, np.array(im_scale_factors)
 
 
+def _clip_boxes(boxes, im_shape):
+    """Clip boxes to image boundaries."""
+    # x1 >= 0
+    boxes[:, 0::4] = np.maximum(boxes[:, 0::4], 0)
+    # y1 >= 0
+    boxes[:, 1::4] = np.maximum(boxes[:, 1::4], 0)
+    # x2 < im_shape[1]
+    boxes[:, 2::4] = np.minimum(boxes[:, 2::4], im_shape[1] - 1)
+    # y2 < im_shape[0]
+    boxes[:, 3::4] = np.minimum(boxes[:, 3::4], im_shape[0] - 1)
+    return boxes
+
+
 def _get_blobs(im):
     """Convert an image and RoIs within that image into network inputs."""
     blobs = {}

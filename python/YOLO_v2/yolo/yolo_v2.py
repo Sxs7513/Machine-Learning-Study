@@ -23,8 +23,9 @@ class yolo_v2(object):
         self.noobject_scale = 1.0
         self.coordinate_scale = 1.0
 
-        # offset 就是 faster-RCNN 的 box-regression，因为特征图大小是 13 * 13
-        # 每个 cell 提取 5 个 anchor，所以最终的 shape 为 (batchsize * 13 * 13 * 5)
+        # 代表 cell 的左上角坐标 (cx, cy)，但为什么最终定成 1 * 13 * 13 * 5 呢，照例来说应该是 1 * 13 * 13 * 5 * 2
+        # 这是因为每个 cell 的尺度为 1，那么某个 cell 的左上角坐标即为 (1, 1)，按照下面的生成只需要 transpose 即可得到 y
+        # 说的有点模糊，看一下下面的 loss 实现，即知道为什么了
         self.offset = np.transpose(
             np.reshape(
                 np.array([np.arange(self.cell_size)] *
@@ -153,26 +154,99 @@ class yolo_v2(object):
         predict = tf.reshape(predict, [
                              self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, self.num_class + 5])
         # 每个 anchor 预测的位置信息, tx, ty, tw, th
-        box_coordinate = tf.reshape(predict[:, :, :, :4], [
+        box_coordinate = tf.reshape(predict[:, :, :, :, :4], [
                                     self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, 4])
         # 每个 anchor 预测的置信度
-        box_confidence = tf.reshape(predict[:, :, :, 4], [
+        box_confidence = tf.reshape(predict[:, :, :, :, 4], [
                                     self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, 1])
         # 每个 anchor 预测的类别，是一个向量
         box_classes = tf.reshape(predict[:, :, :, :, 5:], [
                                  self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, self.num_class])
 
-        # yolo 特有的描述边框中心和宽高的位置与大小
+        # yolo 特有的描述边框中心和宽高的位置与大小， bx by 是框经计算后的中心位置
         boxes1 = tf.stack([
-            # bx = (sigmoid(tx) + cx) / W
+            # bx = (sigmoid(tx) + cx) / W，注意 [:, : ,: ,:, 0] 这样的切片等于降维了，所以可以相加
             (1.0 / (1.0 + tf.exp(-1.0 * box_coordinate[:, : ,: ,:, 0])) + self.offset) / self.cell_size,
-            # by = (sigmoid(ty) + cy) / W
+            # by = (sigmoid(ty) + cy) / W，transpose 的原因是 offset 的格式，将第三维拉到第二维度上面就变成加 cy 了
             (1.0 / (1.0 + tf.exp(-1.0 * box_coordinate[:, :, :, :, 1])) + tf.transpose(self.offset, (0, 2, 1, 3))) / self.cell_size,
             # bw = pwetw / W
-            tf.sqrt(tf.exp(box_coordinate[:, :, :, :, 2]) * np.reshape(self.anchor[:5], [1,1,1,5]) / self.cell_size),
+            tf.sqrt(tf.exp(box_coordinate[:, :, :, :, 2]) * np.reshape(self.anchor[:5], [1, 1, 1, 5]) / self.cell_size),
             # bh = pheth / H
             tf.sqrt(tf.exp(box_coordinate[:, :, :, :, 3]) * np.reshape(self.anchor[5:], [1, 1, 1, 5]) / self.cell_size),
         ])
+        # 经过 stack 后变成五维，将第一维换到最后，方便 iou 计算，第一维即 bx by bw bh
+        box_coor_trans = tf.transpose(boxes1, (1, 2, 3, 4, 0))
+        box_confidence = 1.0 / (1.0 + tf.exp(-1.0 * box_confidence))
+        box_classes = tf.nn.softmax(box_classes)
 
+        # 标注某个 cell 是否在真实框中心
+        response = tf.reshape(label[:, :, :, :, 0], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell])
+        boxes = tf.reshape(label[:, :, :, :, 1:5], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, 4])
+        classes = tf.reshape(label[:, :, :, :, 5:], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, self.num_class])
+
+        # 计算 iou，iout 的 shape 为 (batchsize, 13, 13, 5)
+        iou = self.calc_iou(box_coor_trans, boxes)
+        # 找到最后一个维度(五个anchor)的最大 iou，保留最大的，丢掉其他的，但是保留维度信息
+        best_box = tf.to_float(tf.equal(iou, tf.reduce_max(iou, axis=-1, keep_dims=True)))
+        # 保证只用中心来预测
+        confs = tf.expand_dims(best_box * response, axis = 4)
+        
+        # 下面这三个参数是保证，只有中心 cell 进入预测，这是 yolo 算法的特性
+        # 前景背景损失函数，有目标的权重 object_scale 设置为 5，这样对于尺度较小的 boxes 可以放大误差
+        conid = self.noobject_scale * (1 - confs) + self.object_scale * confs
+        # 
+        cooid = self.coordinate_scale * confs
+        # 
+        proid = self.class_scale * confs
+        
+        # 位置损失
+        coo_loss = cooid * tf.square(box_coor_trans - boxes)
+        # 置信度损失, 其它的边界框只计算置信度误差
+        con_loss = conid * tf.square(box_confidence - confs)
+        # 类别损失
+        pro_loss = proid * tf.square(box_classes - classes)
+
+        loss = tf.concat([coo_loss, con_loss, pro_loss], axis=4)
+        loss = tf.reduce_mean(tf.reduce_sum(loss, axis = [1, 2, 3, 4]), name = 'loss')
+
+        return loss
+
+    def calc_iou(self, boxes1, boxes2):
+        boxx = tf.square(boxes1[:, :, :, :, 2:4])
+        # bw * bh，即面积
+        boxes1_square = boxx[:, :, :, :, 0] * boxx[:, :, :, :, 1]
+        # 计算 box 左上角与右下角位置
+        box = tf.stack([
+            # bx - 0.5 * bw
+            boxes1[:, :, :, :, 0] - boxx[:, :, :, :, 0] * 0.5,
+            # by - 0.5 * bh
+            boxes1[:, :, :, :, 1] - boxx[:, :, :, :, 1] * 0.5,
+            # bx + 0.5 * bw
+            boxes1[:, :, :, :, 0] + boxx[:, :, :, :, 0] * 0.5,
+            # by + 0.5 * bw
+            boxes1[:, :, :, :, 1] + boxx[:, :, :, :, 1] * 0.5
+        ])
+        boxes1 = tf.transpose(box, (1, 2, 3, 4, 0))
+
+        # 同理， box2 的
+        boxx = tf.square(boxes2[:, :, :, :, 2:4])
+        boxes2_square = boxx[:, :, :, :, 0] * boxx[:, :, :, :, 1]
+        box = tf.stack([boxes2[:, :, :, :, 0] - boxx[:, :, :, :, 0] * 0.5,
+                        boxes2[:, :, :, :, 1] - boxx[:, :, :, :, 1] * 0.5,
+                        boxes2[:, :, :, :, 0] + boxx[:, :, :, :, 0] * 0.5,
+                        boxes2[:, :, :, :, 1] + boxx[:, :, :, :, 1] * 0.5])
+        boxes2 = tf.transpose(box, (1, 2, 3, 4, 0))
+
+        # 交集左上与右下位置
+        left_up = tf.maximum(boxes1[:, :, :, :, :2], boxes2[:, :, :, :, :2])
+        right_down = tf.maximum(boxes1[:, :, :, :, 2:], boxes2[:, :, :, :, 2:])
+
+        intersection = tf.maximum(right_down - left_up, 0.0)
+        # 交集面积
+        inter_square = intersection[:, :, :, :, 0] * intersection[:, :, :, :, 1]
+        # 并集面积
+        union_square = boxes1_square + boxes2_square - inter_square
+
+        return tf.clip_by_value(1.0 * inter_square / union_square, 0.0, 1.0)
         
 
