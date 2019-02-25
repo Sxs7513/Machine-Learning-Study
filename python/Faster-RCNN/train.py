@@ -72,8 +72,8 @@ class Train:
 
         # Create session
         tfconfig = tf.ConfigProto(allow_soft_placement=True)
-        tfconfig.gpu_options.per_process_gpu_memory_fraction = 0.7
-        # tfconfig.gpu_options.allow_growth = True
+        tfconfig.gpu_options.per_process_gpu_memory_fraction = 0.8
+        tfconfig.gpu_options.allow_growth = True
         sess = tf.Session(config=tfconfig)
 
         with sess.graph.as_default():
