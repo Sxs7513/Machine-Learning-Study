@@ -68,15 +68,15 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     # 打上前景标签：对于每一个gt框，重叠率最大的提取框不论阈值多少都算foreground.
     labels[gt_argmax_overlaps] = 1
 
-    # 打上前景标签2：满足重叠率的检测结果打上 foreground 标签
+    # 打上前景标签2：满足重叠率的检测结果打上 foreground 标签， 大于 0.7
     labels[max_overlaps >= cfg.FLAGS.rpn_positive_overlap] = 1
 
-    # 打上背景标签
+    # 打上背景标签，小于 0.3
     if cfg.FLAGS.rpn_clobber_positives:
         # assign bg labels last so that negative labels can clobber positives
         labels[max_overlaps < cfg.FLAGS.rpn_negative_overlap] = 0
 
-    # 过滤机制：如果正样本过多，再采样一次，就是正负样本平衡
+    # 过滤机制：如果正样本过多，再采样一次，就是正负样本平衡，多余的标记为 -1，即无关
     # cfg.TRAIN.RPN_FG_FRACTION=正样本在每次训练rpn的比例，默认是0.5X256
     num_fg = int(cfg.FLAGS.rpn_fg_fraction * cfg.FLAGS.rpn_batchsize)
     fg_inds = np.where(labels == 1)[0]

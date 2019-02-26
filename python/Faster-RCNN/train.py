@@ -88,7 +88,8 @@ class Train:
             loss = layers["total_loss"]
             lr = tf.Variable(cfg.FLAGS.learning_rate, trainable=False)
             momentum = cfg.FLAGS.momentum
-            optimizer = tf.train.MomentumOptimizer(lr, momentum)
+            # optimizer = tf.train.MomentumOptimizer(lr, momentum)
+            optimizer = tf.train.GradientDescentOptimizer(lr)
 
             # 损失函数自动求导
             gvs = optimizer.compute_gradients(loss)
