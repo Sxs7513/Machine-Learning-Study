@@ -11,7 +11,7 @@ import pandas as pd
 
 train_iterations = []
 train_loss = []
-df = pd.read_csv("loss_record/loss200.csv")
+df = pd.read_csv("loss_record/loss10000.csv")
 train_iterations = df.index
 train_loss = df["total_loss"]
 
@@ -28,7 +28,7 @@ host.legend(loc=1)
 
 # set label color  
 host.axis["left"].label.set_color(p1.get_color())  
-host.set_xlim([-150,2500])  
+host.set_xlim([-150, 20000])  
 host.set_ylim([0., 4])  
 
 plt.draw()  
