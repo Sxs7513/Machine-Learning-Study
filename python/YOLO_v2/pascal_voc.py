@@ -25,7 +25,7 @@ class Pascal_voc(object):
             self.data_path = os.path.join(self.devkil_path, 'VOC2007')
             txtname = os.path.join(self.data_path, 'ImageSets', 'Main', 'trainval.txt')
         if model == 'test':
-            self.devkil_path = os.path.join(self.pascal_voc, 'VOCdevkit-test')
+            self.devkil_path = os.path.join(self.pascal_voc, 'VOCdevkit')
             self.data_path = os.path.join(self.devkil_path, 'VOC2007')
             txtname = os.path.join(self.data_path, 'ImageSets', 'Main', 'test.txt')
 
@@ -33,8 +33,15 @@ class Pascal_voc(object):
             image_ind = [x.strip() for x in f.readlines()]
 
         labels = []
-        for inds in image_ind:
-            return
+        for ind in image_ind:
+            label, num = self.load_data(ind)
+            if num == 0:
+                continue
+            imagename = os.path.join(self.data_path, 'JPEGImages', ind + '.jpg')
+            labels.append({'imagename': imagename, 'labels': label})
+        np.random.shuffle(labels)
+        return labels
+        
 
     def load_data(self, index):
         label = np.zeros([self.cell_size, self.cell_size, self.box_per_cell, self.num_classes + 5])
@@ -69,3 +76,43 @@ class Pascal_voc(object):
             label[yind, xind, :, 5 + class_ind] = 1
             
         return label, len(objects)
+
+
+    def next_batches(self, label):
+        images = np.zeros([self.batch_size, self.image_size, self.image_size, 3])
+        labels = np.zeros([self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, 5 + self.num_classes])
+        num = 0
+        while num < self.batch_size:
+            imagename = label[self.count_t]['imagename']
+            images[num, :, :, :] = self.image_read(imagename)
+            labels[num, :, :, :, :] = label[self.count_t]['labels']
+            num += 1
+            self.count_t += 1
+            if self.count_t >= len(label):
+                np.random.shuffle(label)
+                self.count = 0
+                self.epoch += 1
+        return images, labels
+
+    
+    def next_batches_test(self, label):
+        images = np.zeros([self.batch_size, self.image_size, self.image_size, 3])
+        labels = np.zeros([self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, 5 + self.num_classes])
+        num = 0
+        while num < self.batch_size:
+            imagename = label[self.count_t]['imagename']
+            images[num, :, :, :] = self.image_read(imagename)
+            labels[num, :, :, :, :] = label[self.count_t]['labels']
+            num += 1
+            self.count_t += 1
+            if self.count_t >= len(label):
+                self.count_t = 0
+        return images, labels
+
+
+    def image_read(self, imagename):
+        image = cv2.imread(imagename)
+        image = cv2.resize(image, (self.image_size, self.image_size))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).astype(np.float32)
+        image = image / 255.0 * 2.0 - 1.0
+        return image

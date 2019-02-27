@@ -15,7 +15,7 @@ import PIL
 import numpy as np
 import scipy.sparse
 from lib.config import config as cfg
-from cython_bbox import bbox_overlaps
+# from cython_bbox import bbox_overlaps
 
 
 class imdb(object):

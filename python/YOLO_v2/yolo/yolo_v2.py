@@ -38,10 +38,10 @@ class yolo_v2(object):
             tf.constant(self.offset, dtype=tf.float32),
             [1, self.cell_size, self.cell_size, self.box_per_cell]
         )
-        self.offset = tf.tile(self.offset, [self.batch_size, 1, 1, 1])
+        self.offset = tf.tile(self.offset, (self.batch_size, 1, 1, 1))
 
         self.images = tf.placeholder(
-            tf.float32, [None, self.image_size, self.image_size, 3], names="images")
+            tf.float32, [None, self.image_size, self.image_size, 3], name="images")
         self.logits = self.build_networks(self.images)
 
         if isTraining:
@@ -94,17 +94,15 @@ class yolo_v2(object):
         net = self.conv_layer(
             net, [3, 3, int(net.get_shape()[3]), 1024], name="29_conv")
         net = self.conv_layer(net, [1, 1, 1024, self.box_per_cell *
-                                    (self.num_class * 5)], batch_norm=False, name='30_conv')
+                                    (self.num_class + 5)], batch_norm=False, name='30_conv')
 
         return net
 
     def conv_layer(self, inputs, shape, batch_norm=True, name="0_conv"):
-        weight = tf.Variable(tf.truncated_normal(
-            shape, stddve=0.1), name="weight")
+        weight = tf.Variable(tf.truncated_normal(shape, stddev=0.1), name="weight")
         biases = tf.Variable(tf.constant(0.1, shape=[shape[3]]), name="biases")
 
-        conv = tf.nn.conv2d(inputs, weight, strides=[
-                            1, 1, 1, 1], padding='SAME', name=name)
+        conv = tf.nn.conv2d(inputs, weight, strides=[1, 1, 1, 1], padding='SAME', name=name)
 
         if batch_norm:
             depth = shape[3]
@@ -113,7 +111,7 @@ class yolo_v2(object):
             scale = tf.Variable(
                 tf.ones([depth, ], dtype="float32"), name="scale")
             shift = tf.Variable(
-                tf.ones([depth, ], dtype="float32"), name="shift")
+                tf.zeros([depth, ], dtype="float32"), name="shift")
             # 一个特征图里面数字的的平均值
             mean = tf.Variable(
                 tf.ones([depth, ], dtype='float32'), name='rolling_mean')

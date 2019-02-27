@@ -10,7 +10,8 @@ from __future__ import print_function
 
 import numpy as np
 import numpy.random as npr
-from cython_bbox import bbox_overlaps
+# from cython_bbox import bbox_overlaps
+from lib.utils.cython_bbox import bbox_overlaps
 
 from lib.config import config as cfg
 from lib.utils.bbox_transform import bbox_transform

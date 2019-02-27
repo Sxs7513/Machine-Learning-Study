@@ -83,9 +83,12 @@ class Train:
             tf.set_random_seed(cfg.FLAGS.rng_seed)
             layers = self.net.create_architecture(sess, "TRAIN", self.imdb.num_classes, tag='default')
             loss = layers['total_loss']
-            lr = tf.Variable(cfg.FLAGS.learning_rate, trainable=False)
+            # lr = tf.Variable(cfg.FLAGS.learning_rate, trainable=False)
+            lr = tf.train.exponential_decay(0.06, 0, 10, 0.999, staircase=True)
+
             momentum = cfg.FLAGS.momentum
-            optimizer = tf.train.MomentumOptimizer(lr, momentum)
+            # optimizer = tf.train.MomentumOptimizer(lr, momentum)
+            optimizer = tf.train.GradientDescentOptimizer(lr)
 
             gvs = optimizer.compute_gradients(loss)
 
@@ -129,7 +132,7 @@ class Train:
         # fully connected weights
         self.net.fix_variables(sess, cfg.FLAGS.pretrained_model)
         print('Fixed.')
-        sess.run(tf.assign(lr, cfg.FLAGS.learning_rate))
+        # sess.run(tf.assign(lr, cfg.FLAGS.learning_rate))
         last_snapshot_iter = 0
 
         timer = Timer()

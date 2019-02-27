@@ -24,7 +24,7 @@ tf.app.flags.DEFINE_string('network', "vgg16", "The network to be used as backbo
 # Training Parameters #
 #######################
 tf.app.flags.DEFINE_float('weight_decay', 0.0005, "Weight decay, for regularization")
-tf.app.flags.DEFINE_float('learning_rate', 0.01, "Learning rate")
+tf.app.flags.DEFINE_float('learning_rate', 0.001, "Learning rate")
 tf.app.flags.DEFINE_float('momentum', 0.9, "Momentum")
 tf.app.flags.DEFINE_float('gamma', 0.1, "Factor for reducing the learning rate")
 
@@ -40,7 +40,8 @@ tf.app.flags.DEFINE_boolean('bias_decay', False, "Whether to have weight decay o
 tf.app.flags.DEFINE_boolean('double_bias', False, "Whether to double the learning rate for bias")
 tf.app.flags.DEFINE_boolean('use_all_gt', True, "Whether to use all ground truth bounding boxes for training, "
                                                 "For COCO, setting USE_ALL_GT to False will exclude boxes that are flagged as ''iscrowd''")
-tf.app.flags.DEFINE_integer('max_size', 1000, "Max pixel size of the longest side of a scaled input image")
+# tf.app.flags.DEFINE_integer('max_size', 1000, "Max pixel size of the longest side of a scaled input image")
+tf.app.flags.DEFINE_integer('max_size', 800, "Max pixel size of the longest side of a scaled input image")
 tf.app.flags.DEFINE_integer('test_max_size', 1000, "Max pixel size of the longest side of a scaled input image")
 tf.app.flags.DEFINE_integer('ims_per_batch', 1, "Images to use per minibatch")
 tf.app.flags.DEFINE_integer('snapshot_iterations', 5000, "Iteration to take snapshot")
@@ -57,7 +58,8 @@ tf.app.flags.DEFINE_string('test_mode', "top", "Test mode for bbox proposal")  #
 # RPN Parameters #
 ##################
 tf.app.flags.DEFINE_float('rpn_negative_overlap', 0.3, "IOU < thresh: negative example")
-tf.app.flags.DEFINE_float('rpn_positive_overlap', 0.7, "IOU >= thresh: positive example")
+# tf.app.flags.DEFINE_float('rpn_positive_overlap', 0.7, "IOU >= thresh: positive example")
+tf.app.flags.DEFINE_float('rpn_positive_overlap', 0.6, "IOU >= thresh: positive example")
 tf.app.flags.DEFINE_float('rpn_fg_fraction', 0.5, "Max number of foreground examples")
 tf.app.flags.DEFINE_float('rpn_train_nms_thresh', 0.7, "NMS threshold used on RPN proposals")
 tf.app.flags.DEFINE_float('rpn_test_nms_thresh', 0.7, "NMS threshold used on RPN proposals")

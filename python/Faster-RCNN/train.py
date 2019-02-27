@@ -86,13 +86,12 @@ class Train:
             layers = self.net.create_architecture(sess, "TRAIN", self.imdb.num_classes, tag="default")
             # 总损失函数
             loss = layers["total_loss"]
-            # lr = tf.Variable(cfg.FLAGS.learning_rate, trainable=False)
-            lr = tf.train.exponential_decay(0.015, 0, 10, 0.999, staircase=True)
-
+            lr = tf.Variable(cfg.FLAGS.learning_rate, trainable=False)
+            # lr = tf.train.exponential_decay(0.03, 0, 100, 0.999, staircase=True)
 
             momentum = cfg.FLAGS.momentum
-            # optimizer = tf.train.MomentumOptimizer(lr, momentum)
-            optimizer = tf.train.GradientDescentOptimizer(lr)
+            optimizer = tf.train.MomentumOptimizer(lr, momentum)
+            # optimizer = tf.train.GradientDescentOptimizer(lr)
 
             # 损失函数自动求导
             gvs = optimizer.compute_gradients(loss)
@@ -131,7 +130,7 @@ class Train:
         self.net.fix_variables(sess, cfg.FLAGS.pretrained_model)
         print('Fixed.')
 
-        # sess.run(tf.assign(lr, cfg.FLAGS.learning_rate))
+        sess.run(tf.assign(lr, cfg.FLAGS.learning_rate))
         last_snapshot_iter = 0
 
         timer = Timer()
@@ -148,7 +147,7 @@ class Train:
             if iter == cfg.FLAGS.step_size + 1:
                 # Add snapshot here before reducing the learning rate
                 # self.snapshot(sess, iter)
-                # sess.run(tf.assign(lr, cfg.FLAGS.learning_rate * cfg.FLAGS.gamma))
+                sess.run(tf.assign(lr, cfg.FLAGS.learning_rate * cfg.FLAGS.gamma))
                 pass
 
             timer.tic()

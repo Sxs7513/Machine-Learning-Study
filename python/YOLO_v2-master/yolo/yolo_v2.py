@@ -90,6 +90,7 @@ class yolo_v2(object):
         if batch_norm:
             depth = shape[3]
             scale = tf.Variable(tf.ones([depth, ], dtype='float32'), name='scale')
+            # 位移初始需要为 0，如果为 1 的话就超出 batch_normalization 的界限了，会造成 NaN
             shift = tf.Variable(tf.zeros([depth, ], dtype='float32'), name='shift')
             mean = tf.Variable(tf.ones([depth, ], dtype='float32'), name='rolling_mean')
             variance = tf.Variable(tf.ones([depth, ], dtype='float32'), name='rolling_variance')

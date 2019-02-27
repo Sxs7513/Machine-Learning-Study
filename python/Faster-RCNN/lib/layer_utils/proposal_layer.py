@@ -11,7 +11,6 @@ from lib.config import config as cfg
 from lib.utils.nms_wrapper import nms
 
 def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, anchors, num_anchors):
-
     if type(cfg_key) == bytes:
         cfg_key = cfg_key.decode('utf-8')
 
@@ -40,6 +39,9 @@ def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, 
 
     # 将 scores 打成一维然后获得从小到大的索引值，最后用 [::-1] 颠倒成从大到小
     order = scores.ravel().argsort()[::-1]
+
+    orderCopy = order
+
     if pre_nms_topN > 0:
         # 对所有的框按照前景分数进行排序，选择排序后的前pre_nms_topN
         order = order[:pre_nms_topN]
@@ -55,6 +57,14 @@ def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, 
         keep = keep[:post_nms_topN]
     proposals = proposals[keep, :]
     scores = scores[keep]
+
+    # if not len(keep) < post_nms_topN:
+    #     proposals = proposals[keep, :]
+    #     scores = scores[keep]
+
+    # if len(proposals) < 2000:
+    #     import pdb
+    #     pdb.set_trace()
 
     # Only support single image as input
     # 因为要进行roi_pooling，在保留框的坐标信息前面插入 batch 中图片的编号信息。此时，由于batch_size为1，因此都插入0
