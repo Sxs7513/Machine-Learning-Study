@@ -34,7 +34,12 @@ tf.app.flags.DEFINE_integer('step_size', 30000, "Step size for reducing the lear
 tf.app.flags.DEFINE_integer('display', 10, "Iteration intervals for showing the loss during training, on command line interface")
 
 tf.app.flags.DEFINE_string('initializer', "truncated", "Network initialization parameters")
-tf.app.flags.DEFINE_string('pretrained_model', "./data/imagenet_weights/vgg16.ckpt", "Pretrained network weights")
+osp.abspath(osp.join(osp.dirname(__file__), '../../../train_data/'))
+tf.app.flags.DEFINE_string(
+    'pretrained_model', 
+    osp.abspath(osp.join(osp.dirname(__file__), "../../../train_data/pre_train_model/vgg16.ckpt")), 
+    "Pretrained network weights"
+)
 
 tf.app.flags.DEFINE_boolean('bias_decay', False, "Whether to have weight decay on bias as well")
 tf.app.flags.DEFINE_boolean('double_bias', False, "Whether to double the learning rate for bias")
@@ -105,7 +110,7 @@ tf.app.flags.DEFINE_integer('roi_pooling_size', 7, "Size of the pooled region af
 # Dataset Parameters #
 ######################
 FLAGS2["root_dir"] = osp.abspath(osp.join(osp.dirname(__file__), '..', '..'))
-FLAGS2["data_dir"] = osp.abspath(osp.join(FLAGS2["root_dir"], 'data'))
+FLAGS2["data_dir"] = osp.abspath(osp.join(osp.dirname(__file__), '../../../train_data/'))
 
 
 def get_output_dir(imdb, weights_filename):
