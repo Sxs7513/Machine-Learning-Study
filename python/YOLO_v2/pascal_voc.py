@@ -26,7 +26,7 @@ class Pascal_voc(object):
             txtname = os.path.join(self.data_path, 'ImageSets', 'Main', 'trainval.txt')
         if model == 'test':
             self.devkil_path = os.path.join(self.pascal_voc, 'VOCdevkit')
-            self.data_path = os.path.join(self.devkil_path, 'VOC2007')
+            self.data_path = os.path.join(self.devkil_path, 'VOC2007_test')
             txtname = os.path.join(self.data_path, 'ImageSets', 'Main', 'test.txt')
 
         with open(txtname, "r") as f:

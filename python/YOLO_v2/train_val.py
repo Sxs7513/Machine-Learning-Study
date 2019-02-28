@@ -38,8 +38,10 @@ class Train(object):
         with tf.control_dependencies([self.optimizer]):
             self.train_op = tf.group(self.average_op)
 
-        config = tf.ConfigProto(gpu_options=tf.GPUOptions())
-        self.sess = tf.Session(config=config)
+        tfconfig = tf.ConfigProto(allow_soft_placement=True)
+        tfconfig.gpu_options.per_process_gpu_memory_fraction = 0.8
+        tfconfig.gpu_options.allow_growth = True
+        self.sess = tf.Session(config=tfconfig)
         # self.sess = tf_debug.LocalCLIDebugWrapperSession(self.sess)
         # self.sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
         self.sess.run(tf.global_variables_initializer())
