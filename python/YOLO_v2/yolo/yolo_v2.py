@@ -110,6 +110,7 @@ class yolo_v2(object):
             # https://www.cnblogs.com/guoyaohua/p/8724433.html
             scale = tf.Variable(
                 tf.ones([depth, ], dtype="float32"), name="scale")
+            # 位移初始需要为 0，如果为 1 的话就超出 batch_normalization 的界限了，会造成 NaN
             shift = tf.Variable(
                 tf.zeros([depth, ], dtype="float32"), name="shift")
             # 一个特征图里面数字的的平均值

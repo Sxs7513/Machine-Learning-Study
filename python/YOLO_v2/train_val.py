@@ -29,6 +29,7 @@ class Train(object):
         self.writer = tf.summary.FileWriter(self.output_dir)
 
         self.global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
+        # 指数衰减学习率
         self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 20000, 0.1, name='learn_rate')
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learn_rate).minimize(self.yolo.total_loss, global_step=self.global_step)
         # 滑动平均的方法更新参数

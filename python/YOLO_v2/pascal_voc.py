@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 
 class Pascal_voc(object):
     def __init__(self):
-        self.pascal_voc = os.path.join(cfg.DATA_DIR, 'Pascal_voc')
+        self.pascal_voc = os.path.join(cfg.DATA_DIR, '')
         self.image_size = cfg.IMAGE_SIZE
         self.batch_size = cfg.BATCH_SIZE
         self.cell_size = cfg.CELL_SIZE
