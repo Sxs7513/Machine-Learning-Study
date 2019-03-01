@@ -14,8 +14,10 @@ from lib.utils.bbox_transform import bbox_transform
 def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anchors, num_anchors):
     """Same as the anchor target layer in original Fast/er RCNN """
     A = num_anchors
+    # 提取的所有 anchor 数量
     total_anchors = all_anchors.shape[0]
     K = total_anchors / num_anchors
+    # 包含经过缩放后的图像宽高，和缩放比例
     im_info = im_info[0]
 
     # allow boxes to sit over the edge by a small amount
@@ -33,6 +35,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     )[0]
 
     # keep only inside anchors
+    # 只使用在图像内的框
     anchors = all_anchors[inds_inside, :]
 
     # label: 1 is positive, 0 is negative, -1 is dont care
@@ -86,6 +89,7 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
 
     bbox_inside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
     # only the positive ones have regression targets
+    # 只有前景 anchor 可以进行回归计算
     bbox_inside_weights[labels == 1, :] = np.array(cfg.FLAGS2["bbox_inside_weights"])
 
     bbox_outside_weights = np.zeros((len(inds_inside), 4), dtype=np.float32)
@@ -105,6 +109,8 @@ def anchor_target_layer(rpn_cls_score, gt_boxes, im_info, _feat_stride, all_anch
     bbox_outside_weights[labels == 0, :] = negative_weights
 
     # map up to original set of anchors
+    # 因为目前只是计算 inside 这些的，但是损失函数是要所有的一起进行计算
+    # 所以要还原成 total_anchors 的数量
     labels = _unmap(labels, total_anchors, inds_inside, fill=-1)
     bbox_targets = _unmap(bbox_targets, total_anchors, inds_inside, fill=0)
     bbox_inside_weights = _unmap(bbox_inside_weights, total_anchors, inds_inside, fill=0)

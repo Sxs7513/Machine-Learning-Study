@@ -263,11 +263,17 @@ class Network(object):
     # bbox-regression 的损失函数
     def _smooth_l1_loss(self, bbox_pred, bbox_targets, bbox_inside_weights, bbox_outside_weights, sigma=1.0, dim=[1]):
         sigma_2 = sigma ** 2
+        # 预测与实际的差距
         box_diff = bbox_pred - bbox_targets
+        # bbox_inside_weights 的作用就是让非前景 anchor 不参与回归计算
         in_box_diff = bbox_inside_weights * box_diff
         abs_in_box_diff = tf.abs(in_box_diff)
+        # smoothL1_sign 的作用是 reg 损失函数的分段
+        # tf.less 返回的是布尔值，这样即可完成分段
+        # 分段的界限是 box_diff < 1
         smoothL1_sign = tf.stop_gradient(tf.to_float(tf.less(abs_in_box_diff, 1. / sigma_2)))
         in_loss_box = tf.pow(in_box_diff, 2) * (sigma_2 / 2.) * smoothL1_sign + (abs_in_box_diff - (0.5 / sigma_2)) * (1. - smoothL1_sign)
+        # bbox_outside_weights 作用是保险
         out_loss_box = bbox_outside_weights * in_loss_box
         loss_box = tf.reduce_mean(tf.reduce_sum(
             out_loss_box,
