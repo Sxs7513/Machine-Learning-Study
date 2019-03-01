@@ -1,8 +1,10 @@
 import os.path as osp
 
 DATA_DIR = osp.abspath(osp.join(osp.dirname(__file__), '../../train_data/'))
+PRETRAIN_MODEL_DIR = osp.abspath(osp.join(osp.dirname(__file__), '../../train_data/pre_train_model/YOLO_v2'))
+OUTPUT_DIR = osp.abspath(osp.join(osp.dirname(__file__), '../data/'))
 DATA_SET = 'data_set'
-WEIGHTS_FILE = 'yolo_weights.ckpt'
+WEIGHTS_FILE = 'yolo_v2.ckpt'
 
 CLASSES = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus',
            'car', 'cat', 'chair', 'cow', 'diningtable', 'dog', 'horse',

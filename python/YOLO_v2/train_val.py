@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.python import debug as tf_debug
+from tensorflow.python import pywrap_tensorflow
 import numpy as np
 import argparse
 import datetime
@@ -21,10 +22,9 @@ class Train(object):
         self.saver_iter = cfg.SAVER_ITER
         self.summary_iter = cfg.SUMMARY_ITER
         self.initial_learn_rate = cfg.LEARN_RATE
-        self.output_dir = os.path.join(cfg.DATA_DIR, 'output')
+        self.output_dir = os.path.join(cfg.OUTPUT_DIR, 'output')
+        self.pre_weight_file = os.path.join(cfg.PRETRAIN_MODEL_DIR, cfg.WEIGHTS_FILE)
 
-        self.variable_to_restore = tf.global_variables()
-        self.saver = tf.train.Saver(self.variable_to_restore)
         self.summary_op = tf.summary.merge_all()
         self.writer = tf.summary.FileWriter(self.output_dir)
 
@@ -44,7 +44,19 @@ class Train(object):
         self.sess = tf.Session(config=tfconfig)
         # self.sess = tf_debug.LocalCLIDebugWrapperSession(self.sess)
         # self.sess.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
-        self.sess.run(tf.global_variables_initializer())
+        variables = tf.global_variables()
+        self.sess.run(tf.variables_initializer(variables, name="init"))
+
+        # 加载预训练模型权重，目前这些主流的目标检测算法都需要在 ImageNet 上面进行分类预训练的
+        # 否则直接从头训练的话，会梯度爆炸的，loss 是个天文数字，基本没法往下进行
+        print('Restore weights from:', self.pre_weight_file)
+        pre_weight_dict = self.get_variables_in_checkpoint_file(self.pre_weight_file)
+
+        variables_to_restore = self.yolo.get_variables_to_restore(variables, pre_weight_dict)
+        self.saver = tf.train.Saver(variables_to_restore)
+        self.saver.restore(self.sess, self.pre_weight_file)
+
+        self.writer.add_graph(self.sess.graph)
 
 
     def train(self):
@@ -81,14 +93,14 @@ class Train(object):
                     
                 else:
                     summary_, _ = self.sess.run([self.summary_op, self.train_op], feed_dict = feed_dict)
-                
+
                 self.writer.add_summary(summary_, step)
             
             else:
                 self.sess.run(self.train_op, feed_dict = feed_dict)
 
-            if step % self.saver_iter == 0:
-                self.saver.save(self.sess, self.output_dir + '/yolo_v2.ckpt', global_step = step)
+            if (step > 0) and (step % self.saver_iter == 0):
+                self.saver.save(self.sess, self.output_dir + '/yolo_v2_iter%s.ckpt' % (step), global_step = step)
 
 
     def remain(self, i, start):
@@ -97,6 +109,15 @@ class Train(object):
         else:
             remain_time = (time.time() - start) * (self.max_step - i) / i
         return str(datetime.timedelta(seconds = int(remain_time)))
+
+
+    def get_variables_in_checkpoint_file(self, filename):
+        try:
+            reader = pywrap_tensorflow.NewCheckpointReader(filename)
+            var_to_shape_map = reader.get_variable_to_shape_map()
+            return var_to_shape_map
+        except Exception as e:
+            print(e)
 
 
 def main():

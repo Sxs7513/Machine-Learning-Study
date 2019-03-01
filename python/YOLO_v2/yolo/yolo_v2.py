@@ -44,11 +44,12 @@ class yolo_v2(object):
             tf.float32, [None, self.image_size, self.image_size, 3], name="images")
         self.logits = self.build_networks(self.images)
 
+        # 注意最后没有使用全连接层，以获得更多空间信息
         if isTraining:
-            self.labels = tf.placeholder(tf.float32, [
-                                         None, self.cell_size, self.cell_size, self.box_per_cell, self.num_class + 5], name='labels')
+            self.labels = tf.placeholder(tf.float32, [None, self.cell_size, self.cell_size, self.box_per_cell, self.num_class + 5], name='labels')
             self.total_loss = self.loss_layer(self.logits, self.labels)
             tf.summary.scalar('total_loss', self.total_loss)
+
 
     def build_networks(self, inputs):
         net = self.conv_layer(inputs, [3, 3, 3, 32], name='0_conv')
@@ -98,6 +99,7 @@ class yolo_v2(object):
 
         return net
 
+
     def conv_layer(self, inputs, shape, batch_norm=True, name="0_conv"):
         weight = tf.Variable(tf.truncated_normal(shape, stddev=0.1), name="weight")
         biases = tf.Variable(tf.constant(0.1, shape=[shape[3]]), name="biases")
@@ -129,10 +131,12 @@ class yolo_v2(object):
 
         return conv
 
+
     def pooling_layer(self, inputs, name='1_pool'):
         pool = tf.nn.max_pool(inputs, ksize=[1, 2, 2, 1], strides=[
                               1, 2, 2, 1], padding='SAME', name=name)
         return pool
+
 
     # passthrough, 即将 26*26*512 的特征图变为 13*13*2048 的特征图
     # 就是将一个26*26的图的像素放到4个13*13的图中，水平每2个像素取1个
@@ -149,6 +153,7 @@ class yolo_v2(object):
             [outputs_1, outputs_2, outputs_3, outputs_4], axis=3)
         return output
 
+
     def loss_layer(self, predict, label):
         predict = tf.reshape(predict, [
                              self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, self.num_class + 5])
@@ -162,7 +167,10 @@ class yolo_v2(object):
         box_classes = tf.reshape(predict[:, :, :, :, 5:], [
                                  self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, self.num_class])
 
-        # yolo 特有的描述边框中心和宽高的位置与大小， bx by 是框经计算后的中心位置
+        # yolo 特有的描述边框中心和宽高的位置与大小， bx by 是框经计算后的中心位置，tx ty tw th 是原本的那个回归系数
+        # yolo 中特有的描述边框的方法是：将 cx 与 cy 是中心坐标，单位相对于单元格大小的，边界框的 w 与 h 是相对于整个图片的宽高的
+        # 这样它们都应该在 0-1 之间。同时在 v2 这里借鉴了 Faster-RCNN 的 anchor boxes，并使用 sigmoid 函数来配合上面的归一化
+        # 保证了经过回归后，这四个参数也是在 0 -1 之间的。
         boxes1 = tf.stack([
             # bx = (sigmoid(tx) + cx) / W，注意 [:, : ,: ,:, 0] 这样的切片等于降维了，所以可以相加
             (1.0 / (1.0 + tf.exp(-1.0 * box_coordinate[:, : ,: ,:, 0])) + self.offset) / self.cell_size,
@@ -178,7 +186,7 @@ class yolo_v2(object):
         box_confidence = 1.0 / (1.0 + tf.exp(-1.0 * box_confidence))
         box_classes = tf.nn.softmax(box_classes)
 
-        # 标注某个 cell 是否在真实框中心
+        # response 是数据处理阶段标注的某个 cell 是否在真实框中心
         response = tf.reshape(label[:, :, :, :, 0], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell])
         boxes = tf.reshape(label[:, :, :, :, 1:5], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, 4])
         classes = tf.reshape(label[:, :, :, :, 5:], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, self.num_class])
@@ -187,7 +195,7 @@ class yolo_v2(object):
         iou = self.calc_iou(box_coor_trans, boxes)
         # 找到最后一个维度(五个anchor)的最大 iou，保留最大的，丢掉其他的，但是保留维度信息
         best_box = tf.to_float(tf.equal(iou, tf.reduce_max(iou, axis=-1, keep_dims=True)))
-        # 保证只用中心来预测
+        # 保证只用中心来预测，其他的 cell 即使有 anchor 符合也丢弃
         confs = tf.expand_dims(best_box * response, axis = 4)
         
         # 下面这三个参数是保证，只有中心 cell 进入预测，这是 yolo 算法的特性
@@ -209,6 +217,7 @@ class yolo_v2(object):
         loss = tf.reduce_mean(tf.reduce_sum(loss, axis = [1, 2, 3, 4]), name = 'loss')
 
         return loss
+
 
     def calc_iou(self, boxes1, boxes2):
         boxx = tf.square(boxes1[:, :, :, :, 2:4])
@@ -249,3 +258,12 @@ class yolo_v2(object):
         return tf.clip_by_value(1.0 * inter_square / union_square, 0.0, 1.0)
         
 
+    def get_variables_to_restore(self, variables, pre_weight_dict):
+        variables_to_restore = []
+
+        for v in variables:
+            if v.name.split(':')[0] in pre_weight_dict:
+                print('Variable to restore: %s' % (v.name))
+                variables_to_restore.append(v)
+
+        return variables_to_restore
