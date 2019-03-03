@@ -29,9 +29,16 @@ class Train(object):
         self.writer = tf.summary.FileWriter(self.output_dir)
 
         self.global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
-        # 指数衰减学习率
-        self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 20000, 0.1, name='learn_rate')
+        # 指数衰减学习
+        # self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 200, 0.97, name='learn_rate')
+        self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 20000, 0.05, name='learn_rate')
+        # self.global_step = tf.Variable(0, trainable = False)
+        # self.learn_rate = tf.train.piecewise_constant(self.global_step, [10, 50, 200, 2000], [5e-4, 2e-4, 1e-4, 5e-5, 1e-5])
+
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learn_rate).minimize(self.yolo.total_loss, global_step=self.global_step)
+        # self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.learn_rate).minimize(self.yolo.total_loss)
+        # self.optimizer = tf.train.MomentumOptimizer(self.learn_rate, 0.9).minimize(self.yolo.total_loss)
+
         # 滑动平均的方法更新参数
         self.average_op = tf.train.ExponentialMovingAverage(0.999).apply(tf.trainable_variables())
         # 保证在反向传播后，再更新下次所有weight更新的速度
@@ -100,6 +107,7 @@ class Train(object):
                 self.sess.run(self.train_op, feed_dict = feed_dict)
 
             if (step > 0) and (step % self.saver_iter == 0):
+                print('step----------------- %s' % (step))
                 self.saver.save(self.sess, self.output_dir + '/yolo_v2_iter%s.ckpt' % (step), global_step = step)
 
 

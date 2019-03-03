@@ -186,16 +186,21 @@ class yolo_v2(object):
         box_confidence = 1.0 / (1.0 + tf.exp(-1.0 * box_confidence))
         box_classes = tf.nn.softmax(box_classes)
 
-        # response 是数据处理阶段标注的某个 cell 是否在真实框中心
+        # response 是数据处理阶段标注的某个 cell 是否在真实框中心，在取出值后会降到四维
         response = tf.reshape(label[:, :, :, :, 0], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell])
+        # 注意每个 cell 只代表一个 truth-box
         boxes = tf.reshape(label[:, :, :, :, 1:5], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, 4])
         classes = tf.reshape(label[:, :, :, :, 5:], [self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, self.num_class])
 
-        # 计算 iou，iout 的 shape 为 (batchsize, 13, 13, 5)
+        # 计算 iou，iou 的 shape 为 (batchsize, 13, 13, 5)
+        # 注意只会相同的位置的 box 进行 iou 判断哦，不会与其他的中心框进行判断
+        # 这是与 faster-RCNN 的区别所在
         iou = self.calc_iou(box_coor_trans, boxes)
-        # 找到最后一个维度(五个anchor)的最大 iou，保留最大的，丢掉其他的，但是保留维度信息
+        # 找到最后一个维度(每个 cell 提取的五个anchor)的最大 iou，保留最大的，丢掉其他的，但是保留维度信息
         best_box = tf.to_float(tf.equal(iou, tf.reduce_max(iou, axis=-1, keep_dims=True)))
         # 保证只用中心来预测，其他的 cell 即使有 anchor 符合也丢弃
+        # 可以直接相乘，因为维度符合。同时再用 expand_dims 来将 conf 升维到单独的维度
+        # 好让其可以在下面与其他的进行计算
         confs = tf.expand_dims(best_box * response, axis = 4)
         
         # 下面这三个参数是保证，只有中心 cell 进入预测，这是 yolo 算法的特性
@@ -247,7 +252,7 @@ class yolo_v2(object):
 
         # 交集左上与右下位置
         left_up = tf.maximum(boxes1[:, :, :, :, :2], boxes2[:, :, :, :, :2])
-        right_down = tf.maximum(boxes1[:, :, :, :, 2:], boxes2[:, :, :, :, 2:])
+        right_down = tf.minimum(boxes1[:, :, :, :, 2:], boxes2[:, :, :, :, 2:])
 
         intersection = tf.maximum(right_down - left_up, 0.0)
         # 交集面积
