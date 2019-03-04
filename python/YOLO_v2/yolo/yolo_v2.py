@@ -52,41 +52,43 @@ class yolo_v2(object):
 
 
     def build_networks(self, inputs):
-        net = self.conv_layer(inputs, [3, 3, 3, 32], name='0_conv')
+        activation = None
+
+        net = self.conv_layer(inputs, [3, 3, 3, 32], name='0_conv', activation=activation)
         net = self.pooling_layer(net, name='1_pool')
 
-        net = self.conv_layer(net, [3, 3, 32, 64], name='2_conv')
+        net = self.conv_layer(net, [3, 3, 32, 64], name='2_conv', activation=activation)
         net = self.pooling_layer(net, name='3_pool')
 
-        net = self.conv_layer(net, [3, 3, 64, 128], name='4_conv')
-        net = self.conv_layer(net, [1, 1, 128, 64], name='5_conv')
-        net = self.conv_layer(net, [3, 3, 64, 128], name='6_conv')
+        net = self.conv_layer(net, [3, 3, 64, 128], name='4_conv', activation=activation)
+        net = self.conv_layer(net, [1, 1, 128, 64], name='5_conv', activation=activation)
+        net = self.conv_layer(net, [3, 3, 64, 128], name='6_conv', activation=activation)
         net = self.pooling_layer(net, name='7_pool')
 
-        net = self.conv_layer(net, [3, 3, 128, 256], name='8_conv')
-        net = self.conv_layer(net, [1, 1, 256, 128], name='9_conv')
-        net = self.conv_layer(net, [3, 3, 128, 256], name='10_conv')
+        net = self.conv_layer(net, [3, 3, 128, 256], name='8_conv', activation=activation)
+        net = self.conv_layer(net, [1, 1, 256, 128], name='9_conv', activation=activation)
+        net = self.conv_layer(net, [3, 3, 128, 256], name='10_conv', activation=activation)
         net = self.pooling_layer(net, name='11_pool')
 
-        net = self.conv_layer(net, [3, 3, 256, 512], name='12_conv')
-        net = self.conv_layer(net, [1, 1, 512, 256], name='13_conv')
-        net = self.conv_layer(net, [3, 3, 256, 512], name='14_conv')
-        net = self.conv_layer(net, [1, 1, 512, 256], name='15_conv')
+        net = self.conv_layer(net, [3, 3, 256, 512], name='12_conv', activation=activation)
+        net = self.conv_layer(net, [1, 1, 512, 256], name='13_conv', activation=activation)
+        net = self.conv_layer(net, [3, 3, 256, 512], name='14_conv', activation=activation)
+        net = self.conv_layer(net, [1, 1, 512, 256], name='15_conv', activation=activation)
         # 浅层特征图（分辨率为 26 * 26）
-        net16 = self.conv_layer(net, [3, 3, 256, 512], name='16_conv')
+        net16 = self.conv_layer(net, [3, 3, 256, 512], name='16_conv', activation=activation)
         net = self.pooling_layer(net16, name='17_pool')
 
-        net = self.conv_layer(net, [3, 3, 512, 1024], name='18_conv')
-        net = self.conv_layer(net, [1, 1, 1024, 512], name='19_conv')
-        net = self.conv_layer(net, [3, 3, 512, 1024], name='20_conv')
-        net = self.conv_layer(net, [1, 1, 1024, 512], name='21_conv')
-        net = self.conv_layer(net, [3, 3, 512, 1024], name='22_conv')
+        net = self.conv_layer(net, [3, 3, 512, 1024], name='18_conv', activation=activation)
+        net = self.conv_layer(net, [1, 1, 1024, 512], name='19_conv', activation=activation)
+        net = self.conv_layer(net, [3, 3, 512, 1024], name='20_conv', activation=activation)
+        net = self.conv_layer(net, [1, 1, 1024, 512], name='21_conv', activation=activation)
+        net = self.conv_layer(net, [3, 3, 512, 1024], name='22_conv', activation=activation)
 
-        net = self.conv_layer(net, [3, 3, 1024, 1024], name='23_conv')
+        net = self.conv_layer(net, [3, 3, 1024, 1024], name='23_conv', activation=activation)
         # 13 * 13 * 1024
-        net24 = self.conv_layer(net, [3, 3, 1024, 1024], name='24_conv')
+        net24 = self.conv_layer(net, [3, 3, 1024, 1024], name='24_conv', activation=activation)
 
-        net = self.conv_layer(net16, [1, 1, 512, 64], name='26_conv')
+        net = self.conv_layer(net16, [1, 1, 512, 64], name='26_conv', activation=activation)
         # passthrough，得到 13*13*2048
         net = self.reorg(net)
         # 合并成 13 * 13 * 3072，用以检测小物体
@@ -100,7 +102,7 @@ class yolo_v2(object):
         return net
 
 
-    def conv_layer(self, inputs, shape, batch_norm=True, name="0_conv"):
+    def conv_layer(self, inputs, shape, batch_norm=True, activation=None, name="0_conv"):
         weight = tf.Variable(tf.truncated_normal(shape, stddev=0.1), name="weight")
         biases = tf.Variable(tf.constant(0.1, shape=[shape[3]]), name="biases")
 
@@ -129,6 +131,9 @@ class yolo_v2(object):
         else:
             conv = tf.add(conv, biases)
 
+        if activation:
+            conv = activation(conv)
+
         return conv
 
 
@@ -136,6 +141,13 @@ class yolo_v2(object):
         pool = tf.nn.max_pool(inputs, ksize=[1, 2, 2, 1], strides=[
                               1, 2, 2, 1], padding='SAME', name=name)
         return pool
+
+    
+    # def leaky_relu(self, x, leak=0.2, name="lrelu"):
+    #     with tf.variable_scope(name):
+    #      f1 = 0.5 * (1 + leak)
+    #      f2 = 0.5 * (1 - leak)
+    #      return f1 * x + f2 * tf.abs(x)
 
 
     # passthrough, 即将 26*26*512 的特征图变为 13*13*2048 的特征图
@@ -267,6 +279,8 @@ class yolo_v2(object):
         variables_to_restore = []
 
         for v in variables:
+            # if v.name.find('22') != -1:
+            #     continue
             if v.name.split(':')[0] in pre_weight_dict:
                 print('Variable to restore: %s' % (v.name))
                 variables_to_restore.append(v)

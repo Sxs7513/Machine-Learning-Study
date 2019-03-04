@@ -2,6 +2,7 @@ import tensorflow as tf
 from tensorflow.python import debug as tf_debug
 from tensorflow.python import pywrap_tensorflow
 import numpy as np
+import pandas as pd
 import argparse
 import datetime
 import time
@@ -28,12 +29,13 @@ class Train(object):
         self.summary_op = tf.summary.merge_all()
         self.writer = tf.summary.FileWriter(self.output_dir)
 
-        self.global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
+        # self.global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
+        self.global_step = tf.Variable(0, trainable = False)
         # 指数衰减学习
         # self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 200, 0.97, name='learn_rate')
-        self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 20000, 0.05, name='learn_rate')
-        # self.global_step = tf.Variable(0, trainable = False)
-        # self.learn_rate = tf.train.piecewise_constant(self.global_step, [10, 50, 200, 2000], [5e-4, 2e-4, 1e-4, 5e-5, 1e-5])
+        # self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 20000, 0.1, name='learn_rate')
+        self.learn_rate = tf.train.piecewise_constant(self.global_step, [-1, 100, 20000, 30000], [0.0001, 0.0001, 0.00001, 0.00001])
+        # self.learn_rate = tf.train.polynomial_decay(self.initial_learn_rate, self.global_step, 10000, end_learning_rate=0.00001, power=2.0, cycle=True, name="learn_rate")
 
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learn_rate).minimize(self.yolo.total_loss, global_step=self.global_step)
         # self.optimizer = tf.train.GradientDescentOptimizer(learning_rate=self.learn_rate).minimize(self.yolo.total_loss)
@@ -73,12 +75,15 @@ class Train(object):
         num = 5
         initial_time = time.time()
 
+        train_loss_store = []
+        test_loss_store = []
+
         for step in range(self.max_step + 1):
             images, labels = self.data.next_batches(labels_train)
             feed_dict = {self.yolo.images: images, self.yolo.labels: labels}
 
             if step % self.summary_iter == 0:
-                if step % 50 == 0:
+                if step % 10 == 0:
                     summary_, loss, _ = self.sess.run([self.summary_op, self.yolo.total_loss, self.train_op], feed_dict=feed_dict)
                     sum_loss = 0
 
@@ -87,6 +92,11 @@ class Train(object):
                         feed_dict_t = {self.yolo.images: images_t, self.yolo.labels: labels_t}
                         loss_t = self.sess.run(self.yolo.total_loss, feed_dict=feed_dict_t)
                         sum_loss += loss_t
+
+                    train_loss_store.append(loss)
+                    test_loss_store.append(sum_loss)
+                    dataframe = pd.DataFrame({'train_loss': train_loss_store, 'test_loss': test_loss_store})
+                    dataframe.to_csv("loss_record/loss.csv")
                     
                     log_str = ('{} Epoch: {}, Step: {}, train_Loss: {:.4f}, test_Loss: {:.4f}, Remain: {}').format(
                         datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.data.epoch, int(step), loss, sum_loss/num, self.remain(step, initial_time))

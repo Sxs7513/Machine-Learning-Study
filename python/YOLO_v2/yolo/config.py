@@ -27,7 +27,10 @@ SAVER_ITER = 5000    #Every 'saver_iter' step save a weights
 
 BOX_PRE_CELL = 5    #The number of BoundingBoxs predicted by each grid
 CELL_SIZE = 13      #The size of the last layer  #(batch_size, 13, 13, ?)
-BATCH_SIZE = 20     #The batch size of each training
+BATCH_SIZE = 4     #The batch size of each training
 ALPHA = 0.1
 
 THRESHOLD = 0.3    #The threshold of the probability of the classes
+
+# 是否使用正则化
+BIAS_DECAY = True
