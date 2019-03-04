@@ -34,12 +34,64 @@ class Add(Operation):
     def compute_output(self):
         x, y = self.input_nodes
         self.output_value = np.add(x.output_value, y.output_value)
+        return self.output_value
+    
+    def compute_gradient(self, grad=None):
+        x, y = [node.output_value for node in self.input_nodes]
 
+        if grad is None:
+            grad = np.ones_like(self.output_value)
+        
+        grad_wrt_x = grad
+        while np.ndim(grad_wrt_x) > len(np.shape(x)):
+            grad_wrt_x = np.sum(grad_wrt_x, axis=0)
+        for axis, size in enumerate(np.shape(x)):
+            if size == 1:
+                grad_wrt_x = np.sum(grad_wrt_x, axis=axis, keepdims=True)
+        
+        
+
+def add(x, y, name=None):
+    return Add(x, y, name)
 
 # ------------------------------------------------------------------------------
 # Matrix multiplication operation
 # ------------------------------------------------------------------------------
-class 
+class MatMul(Operation):
+    def __init__(self, x, y, name=None):
+        super(self.__class__, self).__init__(x, y, name=name)
+
+    def compute_output(self):
+        x, y = self.input_nodes
+        self.output_value = np.dot(x.output_value, y.output_value)
+        return self.output_value
+
+def matmul(x, y, name=None):
+    return MatMul(x, y, name)
+
+
+# ------------------------------------------------------------------------------
+# Square operation
+# ------------------------------------------------------------------------------
+class Square(Operation):
+    def __init__(self, x, name=None):
+        super(self.__class__, self).__init__(x, name=name)
+
+    def compute_output(self):
+        x, = self.input_nodes
+        self.output_value = np.square(x.output_value)
+        return self.output_value
+
+    def compute_gradient(self, grad=None):
+        input_value = self.input_nodes[0].output_value
+
+        if grad is None:
+            grad = np.ones_like(self.output_value)
+        
+        return grad * np.multiply(2.0, input_value)
+
+def square(x, name=None):
+    return Square(x, name=name)
 
 
 # ------------------------------------------------------------------------------
