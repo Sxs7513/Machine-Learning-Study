@@ -279,7 +279,7 @@ class yolo_v2(object):
         variables_to_restore = []
 
         for v in variables:
-            # if v.name.find('22') != -1:
+            # if v.name.find('5') != -1:
             #     continue
             if v.name.split(':')[0] in pre_weight_dict:
                 print('Variable to restore: %s' % (v.name))

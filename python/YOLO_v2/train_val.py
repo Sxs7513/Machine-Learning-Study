@@ -26,15 +26,15 @@ class Train(object):
         self.output_dir = os.path.join(cfg.OUTPUT_DIR, 'output')
         self.pre_weight_file = os.path.join(cfg.PRETRAIN_MODEL_DIR, cfg.WEIGHTS_FILE)
 
-        self.summary_op = tf.summary.merge_all()
+        # self.summary_op = tf.summary.merge_all()
         self.writer = tf.summary.FileWriter(self.output_dir)
 
-        # self.global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
+        self.global_step = tf.get_variable('global_step', [], initializer=tf.constant_initializer(0), trainable=False)
         self.global_step = tf.Variable(0, trainable = False)
         # 指数衰减学习
         # self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 200, 0.97, name='learn_rate')
-        # self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 20000, 0.1, name='learn_rate')
-        self.learn_rate = tf.train.piecewise_constant(self.global_step, [-1, 100, 20000, 30000], [0.0001, 0.0001, 0.00001, 0.00001])
+        self.learn_rate = tf.train.exponential_decay(self.initial_learn_rate, self.global_step, 20000, 0.1, name='learn_rate')
+        # self.learn_rate = tf.train.piecewise_constant(self.global_step, [100, 10000, 20000], [0.00007, 0.0001, 0.00001, 0.00001])
         # self.learn_rate = tf.train.polynomial_decay(self.initial_learn_rate, self.global_step, 10000, end_learning_rate=0.00001, power=2.0, cycle=True, name="learn_rate")
 
         self.optimizer = tf.train.AdamOptimizer(learning_rate=self.learn_rate).minimize(self.yolo.total_loss, global_step=self.global_step)
@@ -65,7 +65,7 @@ class Train(object):
         self.saver = tf.train.Saver(variables_to_restore)
         self.saver.restore(self.sess, self.pre_weight_file)
 
-        self.writer.add_graph(self.sess.graph)
+        # self.writer.add_graph(self.sess.graph)
 
 
     def train(self):
@@ -82,43 +82,39 @@ class Train(object):
             images, labels = self.data.next_batches(labels_train)
             feed_dict = {self.yolo.images: images, self.yolo.labels: labels}
 
-            if step % self.summary_iter == 0:
-                if step % 10 == 0:
-                    summary_, loss, _ = self.sess.run([self.summary_op, self.yolo.total_loss, self.train_op], feed_dict=feed_dict)
-                    sum_loss = 0
-
-                    for i in range(num):
-                        images_t, labels_t = self.data.next_batches_test(labels_test)
-                        feed_dict_t = {self.yolo.images: images_t, self.yolo.labels: labels_t}
-                        loss_t = self.sess.run(self.yolo.total_loss, feed_dict=feed_dict_t)
-                        sum_loss += loss_t
-
-                    train_loss_store.append(loss)
-                    test_loss_store.append(sum_loss)
-                    dataframe = pd.DataFrame({'train_loss': train_loss_store, 'test_loss': test_loss_store})
-                    dataframe.to_csv("loss_record/loss.csv")
-                    
-                    log_str = ('{} Epoch: {}, Step: {}, train_Loss: {:.4f}, test_Loss: {:.4f}, Remain: {}').format(
-                        datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.data.epoch, int(step), loss, sum_loss/num, self.remain(step, initial_time))
-                    print(log_str)
-
-                    if loss < 1e4:
-                        pass
-                    else:
-                        print('loss > 1e04')
-                        break
-                    
-                else:
-                    summary_, _ = self.sess.run([self.summary_op, self.train_op], feed_dict = feed_dict)
-
-                self.writer.add_summary(summary_, step)
+            loss, _ = self.sess.run([self.yolo.total_loss, self.train_op], feed_dict=feed_dict)
             
+            if (step % 10 == 0):
+                sum_loss = 0
+
+                for i in range(num):
+                    images_t, labels_t = self.data.next_batches_test(labels_test)
+                    feed_dict_t = {self.yolo.images: images_t, self.yolo.labels: labels_t}
+                    loss_t = self.sess.run(self.yolo.total_loss, feed_dict=feed_dict_t)
+                    sum_loss += loss_t
+
+                train_loss_store.append(loss)
+                test_loss_store.append(sum_loss / num)
+                
+
+                
+                log_str = ('{} Epoch: {}, Step: {}, train_Loss: {:.4f}, test_Loss: {:.4f}, Remain: {}').format(
+                    datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), self.data.epoch, int(step), loss, sum_loss/num, self.remain(step, initial_time))
+                print(log_str)
+
+            if loss < 1e4:
+                pass
             else:
-                self.sess.run(self.train_op, feed_dict = feed_dict)
+                print('loss > 1e04')
+                break
 
             if (step > 0) and (step % self.saver_iter == 0):
                 print('step----------------- %s' % (step))
                 self.saver.save(self.sess, self.output_dir + '/yolo_v2_iter%s.ckpt' % (step), global_step = step)
+
+            if (step > 0) and (step % 100 == 0):
+                dataframe = pd.DataFrame({'train_loss': train_loss_store, 'test_loss': test_loss_store})
+                dataframe.to_csv("loss_record/loss.csv")
 
 
     def remain(self, i, start):
