@@ -1,5 +1,10 @@
+python/train_data
 
 python/CNN-Flower/data
+
+python/ANN-DNN-DigitRecognize/MNIST_data
+python/CNN/data/
+python/CNN-Numpy-Temp/fig
 
 python/R-CNN/data_set
 python/R-CNN/output
@@ -12,5 +17,11 @@ python/R-CNN/svm_train/2/
 python/Faster-RCNN/data/imagenet_weights
 python/Faster-RCNN/data/VOCdevkit2007
 python/Faster-RCNN/default
+python/Faster-RCNN/**/__pycache__
 
 python/YOLO_v2/data/Pascal_voc
+python/YOLO_v2/**/__pycache__
+
+python/YOLO_v3/data/train_data/VOC
+python/YOLO_v3/data/train_data/quick_train_data/tfrecords/quick_train_data.tfrecords
+python/YOLO_v3/data/train_data/quick_train_data/tfrecords/quick_val_data.tfrecords
