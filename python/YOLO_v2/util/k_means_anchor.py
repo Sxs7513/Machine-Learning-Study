@@ -84,7 +84,7 @@ def compute_centroids(label_path, n_anchors, loss_convergence, grid_size, iterat
         print(centroid[3] / grid_size, centroid[2] / grid_size)
 
     
-label_path = osp.abspath(osp.join(osp.dirname(__file__), '../../train_data/VOCdevkit/VOC2007/ImageSets/Main/trainval.txt'))
+label_path = osp.abspath(osp.join(osp.dirname(__file__), '../../train_data/VOCdevkit/VOC2007/ImageSets/Main/train.txt'))
 n_anchors = 5
 loss_convergence = 1e-6
 grid_size = 13

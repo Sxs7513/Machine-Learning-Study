@@ -96,6 +96,7 @@ class yolo_v2(object):
 
         net = self.conv_layer(
             net, [3, 3, int(net.get_shape()[3]), 1024], name="29_conv")
+        # 每张图片最后输出 5 * (21 + 5) 层，每一层提取的信息都不同，包括置信度，回归，分类等
         net = self.conv_layer(net, [1, 1, 1024, self.box_per_cell *
                                     (self.num_class + 5)], batch_norm=False, name='30_conv')
 

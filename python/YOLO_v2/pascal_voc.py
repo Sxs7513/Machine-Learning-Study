@@ -64,7 +64,8 @@ class Pascal_voc(object):
             # 前两个是中心的坐标，后两个是宽高的开方，这么做的原因是 较小的边界框的坐标误差应该要比较大的边界框要更敏感
             # 所以为了保证这一点，将网络的边界框的宽与高预测改为对其平方根的预测
             boxes = [0.5 * (x1 + x2) / self.image_size, 0.5 * (y1 + y2) / self.image_size, np.sqrt((x2 - x1) / self.image_size), np.sqrt((y2 - y1) / self.image_size)]
-            # 计算下它在特征图的哪个位置
+            # 计算下它在特征图的哪个位置，即 truth-box 在哪个 cell 中
+            # 至于为什么乘以 cell_size， 其实就是等于原始的 x 除以 32
             cx = 1.0 * boxes[0] * self.cell_size
             cy = 1.0 * boxes[1] * self.cell_size
             xind = int(np.floor(cx))
