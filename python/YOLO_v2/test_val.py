@@ -40,6 +40,14 @@ class Detector(object):
 
         results = self.calc_output(output)
 
+        for i in range(len(results)):
+            results[i][1] *= (1.0 * image_w / self.image_size)
+            results[i][2] *= (1.0 * image_h / self.image_size)
+            results[i][3] *= (1.0 * image_w / self.image_size)
+            results[i][4] *= (1.0 * image_h / self.image_size)
+
+        return results
+
 
     def calc_output(self, output):
         output = np.reshape(output, [self.cell_size, self.cell_size, self.box_per_cell, 5 + self.num_classes])
@@ -65,8 +73,10 @@ class Detector(object):
         box_filter = boxes[filter_index[0], filter_index[1], filter_index[2]]
         # 找到符合要求的所有 prob
         probs_filter = probs[filter_probs]
-        # 用 argmax 来把
-        classes_num = np.argmax(filter_probs, axis=3)[filter_index[0], filter_index[1], filter_index[2]]
+        # 用 argmax 来找到第一个符合的类别，这里看起来有点奇怪
+        # classes_num = np.argmax(filter_probs, axis=3)[filter_index[0], filter_index[1], filter_index[2]]
+        # 改成用 probs 则代表最可能的类别
+        classes_num = np.argmax(probs, axis=3)[filter_index[0], filter_index[1], filter_index[2]]
 
         # 筛选出来的再排个序，从大到小
         sort_num = np.array(np.argsort(probs_filter))[::-1]
@@ -74,9 +84,30 @@ class Detector(object):
         probs_filter = probs_filter[sort_num]
         classes_num = classes_num[sort_num]
 
+        for i in range(len(probs_filter)):
+            if probs_filter[i] == 0:
+                continue
+            for j in range(i+1, len(probs_filter)):
+                # 相似的框不采用
+                if self.calc_iou(box_filter[i], box_filter[j]) > 0.5:
+                    probs_filter[j] = 0.0
+        
+        filter_probs = np.array(probs_filter > 0, dtype = 'bool')
+        probs_filter = probs_filter[filter_probs]
+        box_filter = box_filter[filter_probs]
+        classes_num = classes_num[filter_probs]
 
+        classesCopy = dict(zip(self.classes, range(self.num_classes)))
+        results = []
+        for i in range(len(probs_filter)):
+            # 保证一个类别只有一个框
+            which_class = self.classes[classes_num[i]]
+            if classesCopy[which_class] is not True:
+                classesCopy[which_class] = True
+                results.append([which_class, box_filter[i][0], box_filter[i][1],
+                                box_filter[i][2], box_filter[i][3], probs_filter[i]])
 
-
+        return results
 
 
     def get_boxes(self, boxes):
@@ -99,18 +130,77 @@ class Detector(object):
 
         return np.transpose(boxes1, (1, 2, 3, 0))
 
+    
+    def calc_iou(self, box1, box2):
+        width = min(box1[0] + 0.5 * box1[2], box2[0] + 0.5 * box2[2]) - max(box1[0] - 0.5 * box1[2], box2[0] - 0.5 * box2[2])
+        height = min(box1[1] + 0.5 * box1[3], box2[1] + 0.5 * box2[3]) - max(box1[1] - 0.5 * box1[3], box2[1] - 0.5 * box2[3])
+
+        if width <= 0 or height <= 0:
+            intersection = 0
+        else:
+            intersection = width * height
+
+        return intersection / (box1[2] * box1[3] + box2[2] * box2[3] - intersection)
+
+    
+    def random_colors(self, N, bright=True):
+        brightness = 1.0 if bright else 0.7
+        hsv = [(i / N, 1, brightness) for i in range(N)]
+        colors = list(map(lambda c: colorsys.hsv_to_rgb(*c), hsv))
+        np.random.shuffle(colors)
+        return colors
+
+
+    def draw(self, image, result):
+        image_h, image_w, _ = image.shape
+        colors = self.random_colors(len(result))
+        for i in range(len(result)):
+            xmin = max(int(result[i][1] - 0.5 * result[i][3]), 0)
+            ymin = max(int(result[i][2] - 0.5 * result[i][4]), 0)
+            xmax = min(int(result[i][1] + 0.5 * result[i][3]), image_w)
+            ymax = min(int(result[i][2] + 0.5 * result[i][4]), image_h)
+            color = tuple([rgb * 255 for rgb in colors[i]])
+            cv2.rectangle(image, (xmin, ymin), (xmax, ymax), color, 1)
+            cv2.putText(image, result[i][0] + ':%.2f' % result[i][5], (xmin + 1, ymin + 8), cv2.FONT_HERSHEY_COMPLEX_SMALL, 0.5, color, 1)
+            print(result[i][0], ':%.2f%%' % (result[i][5] * 100 ))
+
 
     def image_detect(self, imagename):
         image = cv2.imread(imagename)
         result = self.detect(image)
+        self.draw(image, result)
+        cv2.imshow('Image', image)
+        cv2.waitKey(0)
     
 
+    def video_detect(self, cap):
+        while(1):
+            ret, image = cap.read()
+            if not ret:
+                print('Cannot capture images from device')
+                break
+
+            result = self.detect(image)
+            self.draw(image, result)
+            cv2.imshow('Image', image)
+
+            if cv2.waitKey(10) & 0xFF == ord('q'):
+                break
+        cap.release()
+        cv2.destroyAllWindows()
+
+
 if __name__ == '__main__':
-    weights_file = os.path.join(cfg.OUTPUT_DIR, '/output/')
+    weights_file = os.path.abspath(os.path.join(os.path.dirname(__file__), './data/output/yolo_v2_iter20000.ckpt-20000'))
     yolo = yolo_v2(False)    # 'False' mean 'test'
 
     detector = Detector(yolo, weights_file)
 
-    #detect the image
-    imagename = './test/01.jpg'
+    # detect the image
+    imagename = './test/cat.jpg'
     detector.image_detect(imagename)
+
+    # detect the video
+    # cap = cv2.VideoCapture('asd.mp4')
+    # cap = cv2.VideoCapture(0)
+    # detector.video_detect(cap)

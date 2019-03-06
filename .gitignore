@@ -21,7 +21,7 @@ python/Faster-RCNN/**/__pycache__
 
 python/YOLO_v2/data/Pascal_voc
 python/YOLO_v2/**/__pycache__
-python/YOLO_v2/data/output
+python/YOLO_v2/data
 python/YOLO_v2/test
 
 python/YOLO_v3/data/train_data/VOC
