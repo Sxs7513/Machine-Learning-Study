@@ -68,7 +68,7 @@ class pascal_voc(imdb):
 
     # Return the default path where PASCAL VOC is expected to be installed.
     def _get_default_path(self):
-        return os.path.join(cfg.FLAGS2["data_dir"], "VOCdevkit" + self._year)
+        return os.path.join(cfg.FLAGS2["data_dir"], "VOCdevkit")
 
     # Load the indexes listed in this dataset's image set file.
     def _load_image_set_index(self):

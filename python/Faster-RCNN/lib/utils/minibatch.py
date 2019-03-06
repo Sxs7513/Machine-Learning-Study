@@ -13,7 +13,7 @@ from lib.config import config as cfg
 from lib.utils.blob import prep_im_for_blob, im_list_to_blob
 
 # Given a roidb, construct a minibatch sampled from it
-# 
+# 配合 RoIDataLayer 获得本次迭代要训练的数据
 def get_minibatch(roidb, num_classes):
     num_images = len(roidb)
     random_scale_inds = npr.randint(0, high=len(cfg.FLAGS2["scales"]), size=num_images)

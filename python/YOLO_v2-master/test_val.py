@@ -31,6 +31,7 @@ class Detector(object):
         print('Restore weights from: ' + weights_file)
         self.saver = tf.train.Saver()
         self.saver.restore(self.sess, weights_file)
+        
 
     def detect(self, image):
         image_h, image_w, _ = image.shape

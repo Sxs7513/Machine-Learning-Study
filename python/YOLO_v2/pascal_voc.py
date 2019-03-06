@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 
 class Pascal_voc(object):
     def __init__(self):
-        self.pascal_voc = os.path.join(cfg.DATA_DIR, 'Pascal_voc')
+        self.pascal_voc = os.path.join(cfg.DATA_DIR, '')
         self.image_size = cfg.IMAGE_SIZE
         self.batch_size = cfg.BATCH_SIZE
         self.cell_size = cfg.CELL_SIZE
@@ -26,7 +26,7 @@ class Pascal_voc(object):
             txtname = os.path.join(self.data_path, 'ImageSets', 'Main', 'trainval.txt')
         if model == 'test':
             self.devkil_path = os.path.join(self.pascal_voc, 'VOCdevkit')
-            self.data_path = os.path.join(self.devkil_path, 'VOC2007')
+            self.data_path = os.path.join(self.devkil_path, 'VOC2007_test')
             txtname = os.path.join(self.data_path, 'ImageSets', 'Main', 'test.txt')
 
         with open(txtname, "r") as f:
@@ -64,13 +64,15 @@ class Pascal_voc(object):
             # 前两个是中心的坐标，后两个是宽高的开方，这么做的原因是 较小的边界框的坐标误差应该要比较大的边界框要更敏感
             # 所以为了保证这一点，将网络的边界框的宽与高预测改为对其平方根的预测
             boxes = [0.5 * (x1 + x2) / self.image_size, 0.5 * (y1 + y2) / self.image_size, np.sqrt((x2 - x1) / self.image_size), np.sqrt((y2 - y1) / self.image_size)]
-            # 计算下它在特征图的哪个位置
+            # 计算下它在特征图的哪个位置，即 truth-box 在哪个 cell 中
+            # 至于为什么乘以 cell_size， 其实就是等于原始的 x 除以 32
             cx = 1.0 * boxes[0] * self.cell_size
             cy = 1.0 * boxes[1] * self.cell_size
             xind = int(np.floor(cx))
             yind = int(np.floor(cy))
 
-            # 对应的中心位置上标记上真实框的信息
+            # 对应的中心位置上标记上真实框的信息，可以发现每个 cell 只代表一个 truth-box
+            # 如果有重复的情况出现，那么会进行覆盖，这是 yolo_v2 的局限性
             label[yind, xind, :, 0] = 1
             label[yind, xind, :, 1:5] = boxes
             label[yind, xind, :, 5 + class_ind] = 1
@@ -83,12 +85,12 @@ class Pascal_voc(object):
         labels = np.zeros([self.batch_size, self.cell_size, self.cell_size, self.box_per_cell, 5 + self.num_classes])
         num = 0
         while num < self.batch_size:
-            imagename = label[self.count_t]['imagename']
+            imagename = label[self.count]['imagename']
             images[num, :, :, :] = self.image_read(imagename)
-            labels[num, :, :, :, :] = label[self.count_t]['labels']
+            labels[num, :, :, :, :] = label[self.count]['labels']
             num += 1
-            self.count_t += 1
-            if self.count_t >= len(label):
+            self.count += 1
+            if self.count >= len(label):
                 np.random.shuffle(label)
                 self.count = 0
                 self.epoch += 1

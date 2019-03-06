@@ -40,8 +40,6 @@ def proposal_layer(rpn_cls_prob, rpn_bbox_pred, im_info, cfg_key, _feat_stride, 
     # 将 scores 打成一维然后获得从小到大的索引值，最后用 [::-1] 颠倒成从大到小
     order = scores.ravel().argsort()[::-1]
 
-    orderCopy = order
-
     if pre_nms_topN > 0:
         # 对所有的框按照前景分数进行排序，选择排序后的前pre_nms_topN
         order = order[:pre_nms_topN]
