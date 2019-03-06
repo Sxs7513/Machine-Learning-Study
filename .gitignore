@@ -1,3 +1,5 @@
+python/**/__pycache__
+
 python/train_data
 
 python/CNN-Flower/data

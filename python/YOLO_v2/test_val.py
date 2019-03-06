@@ -191,16 +191,16 @@ class Detector(object):
 
 
 if __name__ == '__main__':
-    weights_file = os.path.abspath(os.path.join(os.path.dirname(__file__), './data/output/yolo_v2_iter20000.ckpt-20000'))
+    weights_file = os.path.abspath(os.path.join(os.path.dirname(__file__), './data/trained_model/yolo_v2_iter20000.ckpt-20000'))
     yolo = yolo_v2(False)    # 'False' mean 'test'
 
     detector = Detector(yolo, weights_file)
 
     # detect the image
-    imagename = './test/cat.jpg'
-    detector.image_detect(imagename)
+    # imagename = './test/cat.jpg'
+    # detector.image_detect(imagename)
 
     # detect the video
-    # cap = cv2.VideoCapture('asd.mp4')
+    cap = cv2.VideoCapture('./test/V000.seq')
     # cap = cv2.VideoCapture(0)
-    # detector.video_detect(cap)
+    detector.video_detect(cap)
