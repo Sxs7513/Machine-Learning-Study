@@ -1,3 +1,5 @@
+# http://pytlab.github.io/2018/01/25/%E5%AE%9E%E7%8E%B0%E5%B1%9E%E4%BA%8E%E8%87%AA%E5%B7%B1%E7%9A%84TensorFlow-%E4%BA%8C-%E6%A2%AF%E5%BA%A6%E8%AE%A1%E7%AE%97%E4%B8%8E%E5%8F%8D%E5%90%91%E4%BC%A0%E6%92%AD/
+
 from queue import Queue
 
 import numpy as np
@@ -23,6 +25,18 @@ class Operation(object):
     def compute_gradient(self, grad=None):
         raise NotImplementedError
 
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __neg__(self):
+        return Negative(self)
+
+    def __sub__(self, other):
+        return Add(self, Negative(other))
+
+    def __mul__(self, other):
+        return Multiply(self, other)
+
 
 # ------------------------------------------------------------------------------
 # Addition operation
@@ -43,16 +57,67 @@ class Add(Operation):
             grad = np.ones_like(self.output_value)
         
         grad_wrt_x = grad
+        # 如果输出的维度大于输入的那么代表存在广播，那么把到这一层的导数加起来
+        # 不明白的话看看作者的文章
+        while np.ndim(grad_wrt_x) > len(np.shape(x)):
+            grad_wrt_x = np.sum(grad_wrt_x, axis=0)
+        # 比如如果 x 是一个长度为 2 的列向量，那么需要将到这一层的导数列相加得到与 x 形状一样的梯度向量
+        # 为什么只处理维度size是 1 的情况呢？因为只要size大于1的时候，就必须情况符合才能相加啊哈哈哈
+        for axis, size in enumerate(np.shape(x)):
+            if size == 1:
+                grad_wrt_x = np.sum(grad_wrt_x, axis=axis, keepdims=True)
+        
+        grad_wrt_y = grad
+        while np.ndim(grad_wrt_y) > len(np.shape(y)):
+            grad_wrt_y = np.sum(grad_wrt_y, axis=0)
+        for axis, size in enumerate(np.shape(y)):
+            if size == 1:
+                grad_wrt_y = np.sum(grad_wrt_y, axis=axis, keepdims=True)
+
+        return [grad_wrt_x, grad_wrt_y]
+        
+
+def add(x, y, name=None):
+    return Add(x, y, name)
+
+
+# ------------------------------------------------------------------------------
+# Multiplication operation
+# ------------------------------------------------------------------------------
+class Multiply(Operation):
+    def __init__(self, x, y, name=None):
+        super(self.__class__, self).__init__(x, y, name=name)
+
+    def compute_output(self):
+        x, y = self.input_nodes
+        self.output_value = np.multiply(x.output_value, y.output_value)
+        return self.output_value
+
+    def compute_gradient(self, grad=None):
+        x, y = [node.output_value for node in self.input_nodes]
+
+        if grad is None:
+            grad = np.ones_like(self.output_value)
+
+        grad_wrt_x = grad*y
         while np.ndim(grad_wrt_x) > len(np.shape(x)):
             grad_wrt_x = np.sum(grad_wrt_x, axis=0)
         for axis, size in enumerate(np.shape(x)):
             if size == 1:
                 grad_wrt_x = np.sum(grad_wrt_x, axis=axis, keepdims=True)
-        
-        
 
-def add(x, y, name=None):
-    return Add(x, y, name)
+        grad_wrt_y = grad*x
+        while np.ndim(grad_wrt_y) > len(np.shape(y)):
+            grad_wrt_y = np.sum(grad_wrt_y, axis=0)
+        for axis, size in enumerate(np.shape(y)):
+            if size == 1:
+                grad_wrt_y = np.sum(grad_wrt_y, axis=axis, keepdims=True)
+
+        return [grad_wrt_x, grad_wrt_y]
+
+def multiply(x, y, name=None):
+    return Multiply(x, y, name)
+
 
 # ------------------------------------------------------------------------------
 # Matrix multiplication operation
@@ -66,8 +131,71 @@ class MatMul(Operation):
         self.output_value = np.dot(x.output_value, y.output_value)
         return self.output_value
 
+    def compute_gradient(self, grad=None):
+        x, y = [node.output_value for node in self.input_nodes]
+
+        if not grad:
+            grad = np.ones_like(self.output_value)
+
+        dfdx = np.dot(grad, np.transpose())
+        dfdy = np.dot(np.transpose(x), grad)
+
+        return [dfdx, dfdy]
+         
+
 def matmul(x, y, name=None):
     return MatMul(x, y, name)
+
+
+# ------------------------------------------------------------------------------
+# Negative operation
+# ------------------------------------------------------------------------------
+class Negative(Operation):
+    def __init__(self, x, name=None):
+        super(self.__class__, self).__init__(x, name=name)
+
+    def compute_output(self):
+        x, = self.input_nodes
+        self.output_value = -x.output_value
+        return self.output_value
+
+    def compute_gradient(self, grad=None):
+        if grad is None:
+            grad = np.ones_like(self.output_value)
+
+        return -grad
+
+
+# ------------------------------------------------------------------------------
+# Reduce sum operation
+# ------------------------------------------------------------------------------
+class ReduceSum(Operation):
+    def __init__(self, x, axis=None):
+        super(self.__class__, self).__init__(x)
+        self.axis = axis
+    
+    def compute_output(self):
+        x, = self.input_nodes
+        self.output_value = np.sum(x.output_value, axis=self.axis)
+        return self.output_value
+
+    def compute_gradient(self, grad=None):
+        input_value = self.input_nodes[0].output_value
+
+        if grad is None:
+            grad = np.ones_like(self.output_value)
+
+        # 将对该层输出的梯度形状改为与输入一致，不需要其他任何操作
+        # 因为该操作符只是单纯的相加, 对输入的梯度都是 1
+        output_shape = np.array(np.shape(input_value))
+        output_shape[self.axis] = 1.0
+        tile_scaling = np.shape(input_value) // output_shape
+        grad = np.reshape(grad, output_shape)
+        return np.tile(grad, tile_scaling)
+
+
+def reduce_sum(x, axis=None):
+    return ReduceSum(x, axis=axis)
 
 
 # ------------------------------------------------------------------------------
@@ -110,6 +238,18 @@ class Constant(object):
             self.output_value = self.value
         return self.output_value
 
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __neg__(self):
+        return Negative(self)
+
+    def __sub__(self, other):
+        return Add(self, Negative(other))
+
+    def __mul__(self, other):
+        return Multiply(self, other)
+
 def constant(value, name=None):
     return Constant(value, name=name)
 
@@ -132,6 +272,17 @@ class Variable(object):
             self.output_value = self.initial_value
         return self.initial_value
 
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __neg__(self):
+        return Negative(self)
+
+    def __sub__(self, other):
+        return Add(self, Negative(other))
+
+    def __mul__(self, other):
+        return Multiply(self, other)
 
 # ------------------------------------------------------------------------------
 # Placeholder node
@@ -144,5 +295,63 @@ class Placeholder(object):
         self.graph = DEFAULT_GRAPH
         self.graph.placeholders.append(self)
 
+    def __add__(self, other):
+        return Add(self, other)
+
+    def __neg__(self):
+        return Negative(self)
+
+    def __sub__(self, other):
+        return Add(self, Negative(other))
+
+    def __mul__(self, other):
+        return Multiply(self, other)
+
 def placeholder(name=None):
     return Placeholder(name=name)
+
+
+# ------------------------------------------------------------------------------
+# Function for gradients computation.
+# ------------------------------------------------------------------------------
+# 广度优先搜索
+def compute_gradients(target_op):
+    # 存储所有在 target_op 这条链上面的所有 node 的梯度
+    grad_table = {}
+    # 顶级的节点木有上级 grad
+    grad_table[target_op] = np.ones_like(target_op.output_value)
+
+    queue = Queue()
+    queue.put(target_op)
+
+    visited = set()
+    visited.add(target_op)
+
+    while not queue.empty():
+        node = queue.get()
+
+        if node != target_op:
+            grads_wrt_node_output = []
+            # 遍历使用了当前结点的节点，取出对该节点的所有梯度
+            for output_node in node.output_nodes:
+                grad_wrt_output_node_output = grad_table[output_node]
+                grad_wrt_node_output = output_node.compute_gradient(grad_wrt_output_node_output)
+                # 如果存在多个输入，那么会有多个输出的梯度，只取需要的
+                if len(output_node.input_nodes) > 1:
+                    input_node_index = output_node.input_nodes.index(node)
+                    grads_wrt_node_output.append(grad_wrt_node_output[input_node_index])
+                else:
+                    grads_wrt_node_output.append(grad_wrt_node_output)
+
+            # 将所有对该节点的梯度加起来，并缓存
+            tot_grad_wrt_node_output = sum(grads_wrt_node_output)
+            grad_table[node] = tot_grad_wrt_node_output
+
+        # 输入节点依次向下计算梯度
+        if hasattr(node, 'input_nodes'):
+            for input_node in node.input_nodes:
+                if input_node not in visited:
+                    visited.add(input_node)
+                    queue.put(input_node)
+
+    return grad_table
