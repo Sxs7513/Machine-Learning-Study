@@ -1,3 +1,4 @@
+# https://blog.csdn.net/leviopku/article/details/82660381
 import tensorflow as tf
 from core import common
 import tf.contrib.slim as slim
@@ -58,10 +59,20 @@ class Yolov3(object):
         self._NUM_CLASSES = num_classes
         self.feature_maps = [] # [[None, 13, 13, 255], [None, 26, 26, 255], [None, 52, 52, 255]]
 
-
+    # yolo_v3的基本组件
     def _yolo_block(self, inputs, filters):
         inputs = common._conv2d_fixed_padding(inputs, filters * 1, 1)
-        
+        inputs = common._conv2d_fixed_padding(inputs, filters * 2, 3)
+        inputs = common._conv2d_fixed_padding(inputs, filters * 1, 1)
+        inputs = common._conv2d_fixed_padding(inputs, filters * 2, 3)
+        inputs = common._conv2d_fixed_padding(inputs, filters * 1, 1)
+        route = inputs
+        inputs = common._conv2d_fixed_padding(inputs, filters * 2, 3)
+        return route, inputs
+
+    
+    def _detection_layer(self, inputs, anchors):
+        num_anchors = len(anchors)
 
     
     def forward(self, inputs, is_training=False, reuse=False):
@@ -78,10 +89,12 @@ class Yolov3(object):
 
         with slim.arg_scope([slim.conv2d, slim.batch_norm, common._fixed_padding],reuse=reuse):
             with slim.arg_scope(
-                [slim.conv2d], 
+                [slim.conv2d],
+                # 所有卷积层默认带 BN 层
                 normalizer_fn=slim.batch_norm,
                 normalizer_params=batch_norm_params,
                 biases_initializer=None,
+                # 所有卷积层默认 leaky-Relu 激活函数 
                 activation_fn=lambda x: tf.nn.leaky_relu(x, alpha=self._LEAKY_RELU)
             ):
                 with tf.variable_scope('darknet-53'):
