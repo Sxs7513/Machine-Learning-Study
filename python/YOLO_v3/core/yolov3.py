@@ -8,8 +8,8 @@ class darknet53(object):
     def __init__(self, inputs):
         self.outputs = self.forward(inputs)
 
-    
-    # 论文中的 resdual-block，作用是加深网络
+
+    # 论文中的 resdual-block，作用是加深网络，darknet 网络的基本组件
     def _darknet53_block(self, inputs, filters):
         shortcut = inputs
         inputs = common._conv2d_fixed_padding(inputs, filters * 1, 1)
@@ -70,9 +70,28 @@ class Yolov3(object):
         inputs = common._conv2d_fixed_padding(inputs, filters * 2, 3)
         return route, inputs
 
-    
+    # 检测层，输出每个传入的 anchor 的基本信息，包括置信度，box，类别
     def _detection_layer(self, inputs, anchors):
         num_anchors = len(anchors)
+        feature_map = slim.conv2d(
+            inputs, 
+            num_anchors * (5 + self._NUM_CLASSES), 1,
+            stride=1, normalizer_fn=None,
+            activation_fn=None,
+            biases_initializer=tf.zeros_initializer()
+        )
+        return feature_map
+
+    
+    @staticmethod
+    def _upsample(inputs, out_shape):
+        new_height, new_width = out_shape[1], out_shape[2]
+        # 临界点插值，对输入进行上采样
+        inputs = tf.image.resize_nearest_neighbor(inputs, (new_height, new_width))
+        # 使用 identity 来把输出作为 op 放入到整个图中
+        # 因为上一步输出的 inputs 不是 op
+        inputs = tf.identity(inputs, name="upsampled")
+        return inputs
 
     
     def forward(self, inputs, is_training=False, reuse=False):
@@ -101,4 +120,13 @@ class Yolov3(object):
                     route_1, route_2, inputs = darknet53(inputs).outputs
 
                 with tf.variable_scope('yolo-v3'):
+                    # 采用多尺度来对不同size的目标进行检测，这是最大尺度的 anchor，用
+                    route, inputs = self._yolo_block(inputs, 512)
+                    feature_map_1 = self._detection_layer(inputs, self._ANCHORS[6:9])
+
+                    inputs = common._conv2d_fixed_padding(route, 256, 1)
+                    unsample_size = route_2.get_shape().as_list()
+                    # 首先要上采样到一样的大小，然后合并
+                    inputs = self._upsample(inputs, unsample_size)
+                    inputs = tf.concat([inputs, route_2], axis=3)
 
