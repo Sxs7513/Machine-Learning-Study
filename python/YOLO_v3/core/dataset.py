@@ -38,7 +38,7 @@ class Parser(object):
         y_true_52 = np.zeros(shape=[grid_sizes[2][0], grid_sizes[2][1], 3, 5+self.num_classes], dtype=np.float32)
 
         y_true = [y_true_13, y_true_26, y_true_52]
-        # 
+        # / 2 就是计算中心，注意在这里并不用进行位置匹配哦
         anchors_max =  self.anchors / 2.
         anchors_min = -anchors_max
         valid_mask = box_sizes[:, 0] > 0
@@ -49,6 +49,18 @@ class Parser(object):
         wh = np.expand_dims(wh, -2)
         boxes_max = wh / 2.
         boxes_min = -boxes_max
+
+        # 反正就是花式计算 iou
+        intersect_mins = np.maximum(boxes_min, anchors_min)
+        intersect_maxs = np.minimum(boxes_max, anchors_max)
+        intersect_wh   = np.maximum(intersect_maxs - intersect_mins, 0.)
+        intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
+        box_area       = wh[..., 0] * wh[..., 1]
+
+        anchor_area = self.anchors[:, 0] * self.anchors[:, 1]
+        iou = intersect_area / (box_area + anchor_area - intersect_area)
+        # Find best anchor for each true box
+        best_anchor = np.argmax(iou, axis=-1)
 
 
     def parser_example(self, serialized_example):

@@ -26,6 +26,7 @@ python/YOLO_v2/**/__pycache__
 python/YOLO_v2/data
 python/YOLO_v2/test
 
+python/YOLO_v3/data/VOCdevkit/
 python/YOLO_v3/data/train_data/
 python/YOLO_v3/data/train_data/quick_train_data/tfrecords/quick_train_data.tfrecords
 python/YOLO_v3/data/train_data/quick_train_data/tfrecords/quick_val_data.tfrecords
