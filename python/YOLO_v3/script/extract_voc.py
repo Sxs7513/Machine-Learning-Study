@@ -11,7 +11,7 @@ parser.add_argument("--dataset_info_path", default="../data/VOC/")
 flags = parser.parse_args()
 
 def convert_annotation(year, image_id, list_file):
-    xml_path = os.path.join(flags.voc_path, './VOCdevkit/VOC%s/Annotations/%s.xml'%(year, image_id))
+    xml_path = os.path.join(flags.voc_path, './VOCdevkit/VOC%s_All/Annotations/%s.xml'%(year, image_id))
     in_file = open(xml_path)
     tree = ET.parse(in_file)
     root = tree.getroot()
@@ -28,7 +28,7 @@ def convert_annotation(year, image_id, list_file):
 
 
 for year, image_set in sets:
-    text_path = os.path.join(flags.voc_path, './VOCdevkit/VOC%s/ImageSets/Main/%s.txt' % (year, image_set))
+    text_path = os.path.join(flags.voc_path, './VOCdevkit/VOC%s_All/ImageSets/Main/%s.txt' % (year, image_set))
     if not os.path.exists(text_path): 
         print('%s does not exit' % text_path)
         continue
@@ -39,7 +39,7 @@ for year, image_set in sets:
 
     list_file = open(list_file_path, "w")
     for image_id in image_ids:
-        image_path = os.path.join(flags.voc_path, './VOCdevkit/VOC%s/JPEGImages/%s.jpg'%(year, image_id))
+        image_path = os.path.join(flags.voc_path, './VOCdevkit/VOC%s_All/JPEGImages/%s.jpg'%(year, image_id))
         print("=>", image_path)
         list_file.write(image_path)
         convert_annotation(year, image_id, list_file)

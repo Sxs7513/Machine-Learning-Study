@@ -59,7 +59,7 @@ class Yolov3(object):
         self._NUM_CLASSES = num_classes
         self.feature_maps = [] # [[None, 13, 13, 255], [None, 26, 26, 255], [None, 52, 52, 255]]
 
-    # yolo_v3的基本组件
+    # yolo_v3的基本组件，卷积 + BN + Leaky relu，输出的 route 用于进行 sample-scale
     def _yolo_block(self, inputs, filters):
         inputs = common._conv2d_fixed_padding(inputs, filters * 1, 1)
         inputs = common._conv2d_fixed_padding(inputs, filters * 2, 3)
@@ -134,8 +134,23 @@ class Yolov3(object):
                     # 首先要上采样到一样的大小，然后合并
                     inputs = self._upsample(inputs, unsample_size)
                     inputs = tf.concat([inputs, route_2], axis=3)
-
+                    # 上面合并出来的上采样层再用来进行预测
                     route, inputs = self._yolo_block(inputs, 256)
                     feature_map_2 = self._detection_layer(inputs, self._ANCHORS[3:6])
                     feature_map_2 = tf.identity(feature_map_2, name='feature_map_2')
 
+                    # 最小的 anchor，与上面同理
+                    inputs = common._conv2d_fixed_padding(route, 128, 1)
+                    unsample_size = route_1.get_shape().as_list()
+                    inputs = self._upsample(inputs, upsample_size)
+                    inputs = tf.concat([inputs, route_1], axis=3)
+
+                    route, inputs = self._yolo_block(inputs, 128)
+                    feature_map_3 = self._detection_layer(inputs, self._ANCHORS[0:3])
+                    feature_map_3 = tf.identity(feature_map_3, name='feature_map_3')
+
+                return feature_map_1, feature_map_2, feature_map_3
+
+        
+    def compute_loss(self, pred_feature_map, y_true, ignore_thresh=0.5, max_box_per_image=8):
+        

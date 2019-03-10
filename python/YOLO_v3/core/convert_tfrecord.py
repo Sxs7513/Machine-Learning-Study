@@ -19,7 +19,7 @@ def main(flags):
     
     image_paths = list(dataset.keys())
     images_num = len(image_paths)
-    print(">> Processing %d images" %images_num)
+    print(">> Processing %d images" % images_num)
 
     tfrecord_file = flags.tfrecord_path_prefix + ".tfrecords"
     with tf.python_io.TFRecordWriter(tfrecord_file) as record_writer:
@@ -42,8 +42,8 @@ def main(flags):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset_txt", default=osp.join(osp.dirname(__file__), '../data/VOC/2007_val.txt'))
-    parser.add_argument("--tfrecord_path_prefix", default=osp.join(osp.dirname(__file__), '../data/train_data/quick_train_data/tfrecords/quick_val_data'))
+    parser.add_argument("--dataset_txt", default=osp.join(osp.dirname(__file__), '../data/VOC/2007_test.txt'))
+    parser.add_argument("--tfrecord_path_prefix", default=osp.join(osp.dirname(__file__), '../data/train_data/quick_train_data/tfrecords/VOC/2007_test'))
     flags = parser.parse_args()
 
     main(flags)
