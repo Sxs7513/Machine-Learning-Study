@@ -27,7 +27,7 @@ class darknet53(object):
 
         for i in range(2):
             inputs = self._darknet53_block(inputs, 64)
-
+        # 用 strides 来进行类似于 max-pool 的操作
         inputs = common._conv2d_fixed_padding(inputs, 256, 3, strides=2)
 
         for i in range(8):
@@ -71,6 +71,7 @@ class Yolov3(object):
         return route, inputs
 
     # 检测层，输出每个传入的 anchor 的基本信息，包括置信度，box，类别
+    # 在 v3 版本中，每个网格预测 3 个 anchor
     def _detection_layer(self, inputs, anchors):
         num_anchors = len(anchors)
         feature_map = slim.conv2d(
@@ -120,13 +121,21 @@ class Yolov3(object):
                     route_1, route_2, inputs = darknet53(inputs).outputs
 
                 with tf.variable_scope('yolo-v3'):
-                    # 采用多尺度来对不同size的目标进行检测，这是最大尺度的 anchor，用
+                    # 采用多尺度来对不同size的目标进行检测，这是最大尺度的 anchor，用最小的特征图
+                    # 来预测最大的 anchor，因为此时有最大的感受野。让 _yolo_block 输出 512 大概
+                    # 是因为大尺寸的需要更多的特征 
                     route, inputs = self._yolo_block(inputs, 512)
                     feature_map_1 = self._detection_layer(inputs, self._ANCHORS[6:9])
-
+                    
+                    # 下面采用跳层的形式来预测较小的 anchor，即较大的特征图来预测。因为之前版本的 yolo
+                    # 存在较小的目标会被多次 max-pool 后信息消失掉
                     inputs = common._conv2d_fixed_padding(route, 256, 1)
                     unsample_size = route_2.get_shape().as_list()
                     # 首先要上采样到一样的大小，然后合并
                     inputs = self._upsample(inputs, unsample_size)
                     inputs = tf.concat([inputs, route_2], axis=3)
+
+                    route, inputs = self._yolo_block(inputs, 256)
+                    feature_map_2 = self._detection_layer(inputs, self._ANCHORS[3:6])
+                    feature_map_2 = tf.identity(feature_map_2, name='feature_map_2')
 
