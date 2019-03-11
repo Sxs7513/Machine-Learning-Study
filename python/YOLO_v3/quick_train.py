@@ -25,3 +25,15 @@ test_tfrecord    = ("./data/train_data/quick_train_Data/tfrecords/%s/test.tfreco
 parser   = Parser(IMAGE_H, IMAGE_W, ANCHORS, NUM_CLASSES)
 trainset = dataset(parser, train_tfrecord, BATCH_SIZE, shuffle=SHUFFLE_SIZE)
 testset  = dataset(parser, test_tfrecord , BATCH_SIZE, shuffle=None)
+
+is_training = tf.placeholder(tf.bool)
+example = tf.cond(is_training, lambda: trainset.get_next(), lambda: testset.get_next())
+
+images, *y_true = example
+model = yolov3.yolov3(NUM_CLASSES, ANCHORS)
+
+with tf.variable_scope('yolov3'):
+    pred_feature_map = model.forward(images, is_training=is_training)
+    loss             = model.compute_loss(pred_feature_map, y_true)
+    y_pred           = model.predict(pred_feature_map)
+

@@ -18,12 +18,23 @@ class Parser(object):
 
         if self.debug: return image, gt_boxes
 
+        y_true_13, y_true_26, y_true_52 = tf.py_func(
+            self.preprocess_true_boxes, 
+            inp=[gt_boxes],
+            Tout = [tf.float32, tf.float32, tf.float32]
+        )
+
+        # 归一化
+        image = image / 255
+
+        return image, y_true_13, y_true_26, y_true_52
+
     
     def preprocess_true_boxes(self, gt_boxes):
         num_layers = len(self.anchors) // 3
         anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]]
         # 三种 feature-map 的大小
-        grid_size = [[self.image_h//x, self.image_w//x] for x in (32 ,16, 8)]
+        grid_sizes = [[self.image_h//x, self.image_w//x] for x in (32 ,16, 8)]
 
         # the center of box, the height and width of box
         box_centers = (gt_boxes[:, 0:2] + gt_boxes[:, 2:4]) / 2
@@ -32,10 +43,11 @@ class Parser(object):
         gt_boxes[:, 0:2] = box_centers
         gt_boxes[:, 2:4] = box_sizes
 
-        # 每种 feature-map 对应的 y值 的结构
-        y_true_13 = np.zeros(shape=[grid_size[0][0], grid_size[0][1], 3, 5 + self.num_classes], dtype=np.float32)
-        y_true_26 = np.zeros(shape=[grid_sizes[1][0], grid_sizes[1][1], 3, 5+self.num_classes], dtype=np.float32)
-        y_true_52 = np.zeros(shape=[grid_sizes[2][0], grid_sizes[2][1], 3, 5+self.num_classes], dtype=np.float32)
+        # 每种 feature-map 对应的 y值 的结构，前两维度组成的每一点都是代表一个原图的 grid，第三个维度代表
+        # 对应的哪个 anchor，同时也代表一个cell预测几个 box，最后一个维度代表置信度，box大小位置，类别
+        y_true_13 = np.zeros(shape=[grid_sizes[0][0], grid_sizes[0][1], 3, 5 + self.num_classes], dtype=np.float32)
+        y_true_26 = np.zeros(shape=[grid_sizes[1][0], grid_sizes[1][1], 3, 5 + self.num_classes], dtype=np.float32)
+        y_true_52 = np.zeros(shape=[grid_sizes[2][0], grid_sizes[2][1], 3, 5 + self.num_classes], dtype=np.float32)
 
         y_true = [y_true_13, y_true_26, y_true_52]
         # / 2 就是计算中心，注意在这里并不用进行位置匹配哦
@@ -59,8 +71,26 @@ class Parser(object):
 
         anchor_area = self.anchors[:, 0] * self.anchors[:, 1]
         iou = intersect_area / (box_area + anchor_area - intersect_area)
-        # Find best anchor for each true box
+        # 找到每个 box 是第几个 anchor 与其最像
         best_anchor = np.argmax(iou, axis=-1)
+
+        for t, n in enumerate(best_anchor):
+            for l in range(num_layers):
+                # 只与最接近的的 feature-map 匹配
+                if n not in anchor_mask[l]: continue
+                
+                # 计算 box 中心在特征图的哪个位置
+                i = np.floor(gt_boxes[t, 0] / self.image_w * grid_sizes[l, 1]).astype('int32')
+                j = np.floor(gt_boxes[t, 1] / self.image_h * grid_sizes[l, 0]).astype('int32')
+
+                k = anchor_mask[l].index(n)
+                c = gt_boxes[t, 4].astype('int32')
+                
+                y_true[l][j, i, k, 0:4] = gt_boxes[t, 0:4]
+                y_true[l][j, i, k,   4] = 1.
+                y_true[l][j, i, k, 5+c] = 1.
+
+        return y_true_13, y_true_26, y_true_52        
 
 
     def parser_example(self, serialized_example):
@@ -102,4 +132,14 @@ class dataset(object):
             num_parallel_calls = 10
         )
         self._TFRecordDataset = self._TFRecordDataset.repeat() if self.repeat else self._TFRecordDataset
+
+        if self.shuffle is not None:
+            self._TFRecordDataset = self._TFRecordDataset.shuffle(self.shuffle)
+
+        self._TFRecordDataset = self._TFRecordDataset.batch(self.batch_size).prefetch(self.batch_size)
+        self._iterator = self._TFRecordDataset.make_one_shot_iterator()
+
+    
+    def get_next(self):
+        return self._iterator.get_next()
         

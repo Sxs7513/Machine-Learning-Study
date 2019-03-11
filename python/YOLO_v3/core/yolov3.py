@@ -83,6 +83,49 @@ class Yolov3(object):
         )
         return feature_map
 
+
+    def _reorg_layer(self, feature_map, anchors):
+        num_anchors = len(anchors)
+        grid_size = feature_map.shape.as_list()[1:3]
+        # 计算特征图对于原始图的缩放比例
+        stride = tf.cast(self.img_size // grid_size, tf.float32) # [h,w] -> [y,x]
+        feature_map = tf.reshape(feature_map, [-1, grid_size[0], grid_size[1], num_anchors, 5 + self._NUM_CLASSES])
+
+        # 获得预测的 box 信息
+        box_centers, box_sizes, conf_logits, prob_logits = tf.split(
+            feature_map,
+            [2, 2, 1, self._NUM_CLASSES]
+            axis = -1
+        )
+
+        # box 中心用 sigmoid 转换
+        box_centers = tf.nn.sigmoid(box_centers)
+
+        # 按照特征图大小生成网格坐标
+        grid_x = tf.range(grid_size[1], dtype=tf.int32)
+        grid_y = tf.range(grid_size[0], dtype=tf.int32)
+
+        # 例如： a=[[0,1,2],[0,1,2]] b=[[1,1,1],[2,2,2]] 这是x:0~2, y:1~2的网格坐标
+        a, b = tf.meshgrid(grid_x, grid_y)
+        x_offset = tf.reshape(a, (-1, 1))
+        y_offset = tf.reshape(b, (-1, 1))
+        x_y_offset = tf.concat([x_offset, y_offset], axis=-1)
+        # 转换成与 center 相同的形状，方便相加，batchsize维度不用考虑(因为有广播功能)
+        # num_anchors 维度直接置为 1, 直接广播到每个 box 上
+        x_y_offset = tf.reshape(x_y_offset, [grid_size[0], grid_size[1], 1, 2])
+        x_y_offset = tf.cast(x_y_offset, tf.float32)
+
+        # 在每个特征图像素上，基于刚才生成的网格坐标，加上预测的中心点坐标
+        # 获得每个 grid 预测的 3 个 anchor 的中心坐标
+        box_centers = box_centers + x_y_offset
+        # 将坐标缩放到原图像上
+        box_centers = box_centers * stride[::-1]
+
+        # 获得预测框真实的大小
+        box_sizes = tf.exp(box_sizes) * anchors
+        boxes = tf.concat([box_centers, box_sizes], axis=-1)
+        return x_y_offset, boxes, conf_logits, prob_logits
+
     
     @staticmethod
     def _upsample(inputs, out_shape):
@@ -153,4 +196,141 @@ class Yolov3(object):
 
         
     def compute_loss(self, pred_feature_map, y_true, ignore_thresh=0.5, max_box_per_image=8):
+        loss_xy, loss_wh, loss_conf, loss_class = 0., 0., 0., 0.
+        total_loss = 0.
+
+        _ANCHORS = [self._ANCHORS[6:9], self._ANCHORS[3:6], self._ANCHORS[0:3]]
+
+        # 
+        for i in range(len(pred_feature_map)):
+            result = self.loss_layer(pred_feature_map[i], y_true[i], _ANCHORS[i])
+            loss_xy    += result[0]
+            loss_wh    += result[1]
+            loss_conf  += result[2]
+            loss_class += result[3]
+
+        total_loss = loss_xy + loss_wh + loss_conf + loss_class
+        return [total_loss, loss_xy, loss_wh, loss_conf, loss_class]
+
+
+    def loss_layer(self, feature_map_i, y_true, anchors)
+        grid_size = tf.shape(feature_map_i)[1:3]
+        grid_size_ = feature_map_i.shape.as_list()[1:3]
+
+        y_true = tf.reshape(y_true, [-1, grid_size_[0], grid_size_[1], 3, 5 + self._NUM_CLASSES])
+
+        # 原图与该特征图的比例
+        ratio = tf.cast(self.img_size / grid_size, tf.float32)
+        # N: batch_size
+        N = tf.cast(tf.shape(feature_map_i)[0], tf.float32)
+
+        # 获得 feature-map 网络坐标，预测的所有框的位置与大小、置信度，类别
+        x_y_offset, pred_boxes, pred_conf_logits, pred_prob_logits = self._reorg_layer(feature_map_i, anchors)
+        # 使用 4:5 这种是为了保留维度
+        object_mask = y_true[..., 4:5]
+        # 获得所有的 truth-box，不符合的会被干掉
+        # 同时也让维度降下来, 这样下面就不用考虑 y_true 中倒数第二个维度了
+        # https://www.cnblogs.com/lyc-seu/p/7956231.html
+        valid_true_boxes = tf.boolean_mask(y_true[..., 0:4], tf.cast(object_mask[..., 0], 'bool'))
+
+        valid_true_box_xy = valid_true_boxes[:, 0:2]
+        valid_true_box_wh = valid_true_boxes[:, 2:4]
+        pred_box_xy = pred_boxes[..., 0:2]
+        pred_box_wh = pred_boxes[..., 2:4]
+
+        # 计算每个像素点对应的 3 个 anchor 与对应位置上面的 truth-box 的 iou
+        iou = self._broadcast_iou(valid_true_box_xy, valid_true_box_wh, pred_box_xy, pred_box_wh)
         
+        # 计算网格上面每个像素点预测的三个 box 其中哪个与它原本上面对应的 truth-box 最接近
+        best_iou = tf.reduce_max(iou, axis=-1)
+
+        # 如果预测的三个 box 与对应的 truth-box 最好的 iou 都小于 0.5
+        # 那么标记该 box 对应的 iou 为 0，即代表非目标
+        ignore_mask = tf.cast(best_iou < 0.5, tf.float32)
+        # 升回原来维度方便后面计算 loss
+        ignore_mask = tf.expand_dims(ignore_mask, -1)
+        
+        # / ratio 先获得相对于特征图的位置
+        # 减去 x_y_offset 即可以获得相对于对应 cell 的位置
+        # 当然这其中大部分都是多余运算, 不过如果优化的话代码会十分复杂
+        true_xy = y_true[..., 0:2] / ratio[::-1] - x_y_offset
+        pred_xy = pred_box_xy      / ratio[::-1] - x_y_offset
+
+        # truth-box 与 预测的 box 相对于每个 anchor 大小
+        true_tw_th = y_true[..., 2:4] / anchors
+        pred_tw_th = pred_box_wh      / anchors
+
+        # 无关的全部置为 1, 即不参与 loss 计算
+        true_tw_th = tf.where(
+            condition=tf.equal(true_tw_th, 0),
+            x=tf.ones_like(true_tw_th), 
+            y=true_tw_th
+        )
+        pred_tw_th = tf.where(
+            condition=tf.equal(pred_tw_th, 0),
+            x=tf.ones_like(pred_tw_th), 
+            y=pred_tw_th
+        )
+
+        true_tw_th = tf.log(tf.clip_by_value(true_tw_th, 1e-9, 1e9))
+        pred_tw_th = tf.log(tf.clip_by_value(pred_tw_th, 1e-9, 1e9))
+        
+        # 位置损失的权重系数, v3 新加的, 对于小目标的惩罚更大
+        box_loss_scale = 2. - (y_true[..., 2:3] / tf.cast(self.img_size[1], tf.float32)) * (y_true[..., 3:4] / tf.cast(self.img_size[0], tf.float32))
+
+        # 位置损失，乘以 object_mask 来保证非目标 box 不进入位置回归计算
+        xy_loss = tf.reduce_sum(tf.square(true_xy    - pred_xy) * object_mask * box_loss_scale) / N
+        wh_loss = tf.reduce_sum(tf.square(true_tw_th - pred_tw_th) * object_mask * box_loss_scale) / N
+
+        conf_pos_mask = object_mask
+        # 两个相乘才能得到最终的非目标 box
+        conf_neg_mask = (1 - object_mask) * ignore_mask
+        # 目标 box 置信度损失
+        conf_loss_pos = conf_pos_mask * tf.nn.sigmoid_cross_entropy_with_logits(labels=object_mask, logits=pred_conf_logits)
+        # 非目标 box 置信度损失, 可以发现在损失函数中，非目标box只参与了置信度
+        conf_loss_neg = conf_neg_mask * tf.nn.sigmoid_cross_entropy_with_logits(labels=object_mask, logits=pred_conf_logits)
+        conf_loss = tf.reduce_sum(conf_loss_pos + conf_loss_neg) / N
+
+        # 作者使用二元交叉熵损失来代替softmax进行预测类别，这个选择有助于把YOLO用于更复杂的领域。Open Images Dataset V4数据集中包含了大量重叠的标签（如女性和人）。
+        # 如果用的是softmax，它会强加一个假设，使得每个框只包含一个类别。但通常情况下这样做是不妥的，相比之下，多标记的分类方法能更好地模拟数据。
+        class_loss = object_mask * tf.nn.sigmoid_cross_entropy_with_logits(labels=y_true[..., 5:], logits=pred_prob_logits)
+        class_loss = tf.reduce_sum(class_loss) / N
+
+        return xy_loss, wh_loss, conf_loss, class_loss
+
+        
+    def _broadcast_iou(self, true_box_xy, true_box_wh, pred_box_xy, pred_box_wh):
+        '''
+        maintain an efficient way to calculate the ios matrix between ground truth true boxes and the predicted boxes
+        note: here we only care about the size match
+        '''
+        # shape:
+        # true_box_??: [V, 2] 
+        # pred_box_??: [N, 13, 13, 3, 2]
+
+        # shape: [N, 13, 13, 3, 1, 2]
+        pred_box_xy = tf.expand_dims(pred_box_xy, -2)
+        pred_box_wh = tf.expand_dims(pred_box_wh, -2)
+
+        # shape: [1, V, 2]
+        true_box_xy = tf.expand_dims(true_box_xy, 0)
+        true_box_wh = tf.expand_dims(true_box_wh, 0)
+
+        # [N, 13, 13, 3, 1, 2] & [1, V, 2] ==> [N, 13, 13, 3, V, 2]
+        intersect_mins = tf.maximum(pred_box_xy - pred_box_wh / 2.,
+                                    true_box_xy - true_box_wh / 2.)
+        intersect_maxs = tf.minimum(pred_box_xy + pred_box_wh / 2.,
+                                    true_box_xy + true_box_wh / 2.)
+        intersect_wh = tf.maximum(intersect_maxs - intersect_mins, 0.)
+
+        # shape: [N, 13, 13, 3, V]
+        intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
+        # shape: [N, 13, 13, 3, 1]
+        pred_box_area  = pred_box_wh[..., 0]  * pred_box_wh[..., 1]
+        # shape: [1, V]
+        true_box_area  = true_box_wh[..., 0]  * true_box_wh[..., 1]
+        # [N, 13, 13, 3, V]
+        iou = intersect_area / (pred_box_area + true_box_area - intersect_area)
+
+        return iou
+
