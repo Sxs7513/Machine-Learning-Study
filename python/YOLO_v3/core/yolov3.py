@@ -201,7 +201,7 @@ class Yolov3(object):
 
         _ANCHORS = [self._ANCHORS[6:9], self._ANCHORS[3:6], self._ANCHORS[0:3]]
 
-        # 
+        # 计算每个 feature_map 与对应的 anchor 的 loss
         for i in range(len(pred_feature_map)):
             result = self.loss_layer(pred_feature_map[i], y_true[i], _ANCHORS[i])
             loss_xy    += result[0]
@@ -212,7 +212,8 @@ class Yolov3(object):
         total_loss = loss_xy + loss_wh + loss_conf + loss_class
         return [total_loss, loss_xy, loss_wh, loss_conf, loss_class]
 
-
+    # feature_map_i 为该批次中全部的某类型的 feature_map(13 或 26 或 52)
+    # y_true 同理，为对应的真实值
     def loss_layer(self, feature_map_i, y_true, anchors)
         grid_size = tf.shape(feature_map_i)[1:3]
         grid_size_ = feature_map_i.shape.as_list()[1:3]
@@ -244,8 +245,8 @@ class Yolov3(object):
         # 计算网格上面每个像素点预测的三个 box 其中哪个与它原本上面对应的 truth-box 最接近
         best_iou = tf.reduce_max(iou, axis=-1)
 
-        # 如果预测的三个 box 与对应的 truth-box 最好的 iou 都小于 0.5
-        # 那么标记该 box 对应的 iou 为 0，即代表非目标
+        # 如果某个 cell 预测的三个 box 与对应的 truth-box 最好的 iou 都小于 0.5
+        # 那么代表预测的是非目标
         ignore_mask = tf.cast(best_iou < 0.5, tf.float32)
         # 升回原来维度方便后面计算 loss
         ignore_mask = tf.expand_dims(ignore_mask, -1)
@@ -256,11 +257,11 @@ class Yolov3(object):
         true_xy = y_true[..., 0:2] / ratio[::-1] - x_y_offset
         pred_xy = pred_box_xy      / ratio[::-1] - x_y_offset
 
-        # truth-box 与 预测的 box 相对于每个 anchor 大小
+        # truth-box 与 预测的 box 相对于每个 anchor 大小，用于计算 loss
         true_tw_th = y_true[..., 2:4] / anchors
         pred_tw_th = pred_box_wh      / anchors
 
-        # 无关的全部置为 1, 即不参与 loss 计算
+        # 将两者中为 0 的全部换为 1，这是为了做啥？
         true_tw_th = tf.where(
             condition=tf.equal(true_tw_th, 0),
             x=tf.ones_like(true_tw_th), 
@@ -278,12 +279,12 @@ class Yolov3(object):
         # 位置损失的权重系数, v3 新加的, 对于小目标的惩罚更大
         box_loss_scale = 2. - (y_true[..., 2:3] / tf.cast(self.img_size[1], tf.float32)) * (y_true[..., 3:4] / tf.cast(self.img_size[0], tf.float32))
 
-        # 位置损失，乘以 object_mask 来保证非目标 box 不进入位置回归计算
+        # 位置损失，乘以 object_mask 来保证非目标 box 不进入box位置回归计算
         xy_loss = tf.reduce_sum(tf.square(true_xy    - pred_xy) * object_mask * box_loss_scale) / N
         wh_loss = tf.reduce_sum(tf.square(true_tw_th - pred_tw_th) * object_mask * box_loss_scale) / N
 
         conf_pos_mask = object_mask
-        # 两个相乘才能得到最终的非目标 box
+        # 两个相乘才能得到最终的非目标 box 损失权重
         conf_neg_mask = (1 - object_mask) * ignore_mask
         # 目标 box 置信度损失
         conf_loss_pos = conf_pos_mask * tf.nn.sigmoid_cross_entropy_with_logits(labels=object_mask, logits=pred_conf_logits)
