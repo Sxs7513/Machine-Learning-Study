@@ -24,7 +24,7 @@ class Parser(object):
             Tout = [tf.float32, tf.float32, tf.float32]
         )
 
-        # 归一化
+        # 归一化, 因为怕大的边框的影响比小的边框影响大
         image = image / 255
 
         return image, y_true_13, y_true_26, y_true_52
@@ -86,6 +86,7 @@ class Parser(object):
                 k = anchor_mask[l].index(n)
                 c = gt_boxes[t, 4].astype('int32')
                 
+                # 边框真实的位置与大小
                 y_true[l][j, i, k, 0:4] = gt_boxes[t, 0:4]
                 y_true[l][j, i, k,   4] = 1.
                 y_true[l][j, i, k, 5+c] = 1.

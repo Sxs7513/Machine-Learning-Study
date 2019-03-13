@@ -230,23 +230,27 @@ class Yolov3(object):
         # 使用 4:5 这种是为了保留维度
         object_mask = y_true[..., 4:5]
         # 获得所有的 truth-box，不符合的会被干掉
-        # 同时也让维度降下来, 这样下面就不用考虑 y_true 中倒数第二个维度了
-        # https://www.cnblogs.com/lyc-seu/p/7956231.html
+        # https://blog.csdn.net/qq_29444571/article/details/84574526
+        # shape: [N, 13, 13, 3, 4] & [N, 13, 13, 3] ==> [V, 4]
+        # V: num of true gt box 
         valid_true_boxes = tf.boolean_mask(y_true[..., 0:4], tf.cast(object_mask[..., 0], 'bool'))
 
         valid_true_box_xy = valid_true_boxes[:, 0:2]
         valid_true_box_wh = valid_true_boxes[:, 2:4]
+        # pred_boxes 还是保留着原来的形状
         pred_box_xy = pred_boxes[..., 0:2]
         pred_box_wh = pred_boxes[..., 2:4]
 
-        # 计算每个像素点对应的 3 个 anchor 与对应位置上面的 truth-box 的 iou
+        # 计算预测的每个 anchor 与该特征图上面所有 truth-box 的 iou
         iou = self._broadcast_iou(valid_true_box_xy, valid_true_box_wh, pred_box_xy, pred_box_wh)
         
-        # 计算网格上面每个像素点预测的三个 box 其中哪个与它原本上面对应的 truth-box 最接近
+        # 计算预测的每个 anchor 与特征图上面哪个 truth-box 最接近
+        # 只保留最接近的值
         best_iou = tf.reduce_max(iou, axis=-1)
 
-        # 如果某个 cell 预测的三个 box 与对应的 truth-box 最好的 iou 都小于 0.5
-        # 那么代表预测的是非目标
+        # 如果某个 cell 预测的三个 anchor 最好的 iou 都小于 0.5
+        # 那么代表该点并没有预测出来目标，意为对于有目标的cell，如果预测有目标的可能性低
+        # 那么需要对其作出惩罚。
         ignore_mask = tf.cast(best_iou < 0.5, tf.float32)
         # 升回原来维度方便后面计算 loss
         ignore_mask = tf.expand_dims(ignore_mask, -1)
@@ -257,26 +261,28 @@ class Yolov3(object):
         true_xy = y_true[..., 0:2] / ratio[::-1] - x_y_offset
         pred_xy = pred_box_xy      / ratio[::-1] - x_y_offset
 
-        # truth-box 与 预测的 box 相对于每个 anchor 大小，用于计算 loss
+        # 边框回归的 tw，th
         true_tw_th = y_true[..., 2:4] / anchors
         pred_tw_th = pred_box_wh      / anchors
 
-        # 将两者中为 0 的全部换为 1，这是为了做啥？
+        # 为 0 的全部换为 1，即真值中非 truth-box 的 tw与 th全部置为1
         true_tw_th = tf.where(
             condition=tf.equal(true_tw_th, 0),
             x=tf.ones_like(true_tw_th), 
             y=true_tw_th
         )
+        # 预测值中预测的边框 tw与 th 也 0 => 1
         pred_tw_th = tf.where(
             condition=tf.equal(pred_tw_th, 0),
             x=tf.ones_like(pred_tw_th), 
             y=pred_tw_th
         )
 
+        # 大小尺寸缩放到对数空间，以防训练带来不稳定的梯度
         true_tw_th = tf.log(tf.clip_by_value(true_tw_th, 1e-9, 1e9))
         pred_tw_th = tf.log(tf.clip_by_value(pred_tw_th, 1e-9, 1e9))
         
-        # 位置损失的权重系数, v3 新加的, 对于小目标的惩罚更大
+        # 位置损失的权重系数, 对于小目标的惩罚更大
         box_loss_scale = 2. - (y_true[..., 2:3] / tf.cast(self.img_size[1], tf.float32)) * (y_true[..., 3:4] / tf.cast(self.img_size[0], tf.float32))
 
         # 位置损失，乘以 object_mask 来保证非目标 box 不进入box位置回归计算
@@ -299,7 +305,7 @@ class Yolov3(object):
 
         return xy_loss, wh_loss, conf_loss, class_loss
 
-        
+    
     def _broadcast_iou(self, true_box_xy, true_box_wh, pred_box_xy, pred_box_wh):
         '''
         maintain an efficient way to calculate the ios matrix between ground truth true boxes and the predicted boxes
@@ -317,11 +323,13 @@ class Yolov3(object):
         true_box_xy = tf.expand_dims(true_box_xy, 0)
         true_box_wh = tf.expand_dims(true_box_wh, 0)
 
-        # [N, 13, 13, 3, 1, 2] & [1, V, 2] ==> [N, 13, 13, 3, V, 2]
         intersect_mins = tf.maximum(pred_box_xy - pred_box_wh / 2.,
                                     true_box_xy - true_box_wh / 2.)
         intersect_maxs = tf.minimum(pred_box_xy + pred_box_wh / 2.,
                                     true_box_xy + true_box_wh / 2.)
+        # 与 numpy 广播特性一致，计算预测的 anchor与该特征图所有的 truth-box的交集大小
+        # https://zhuanlan.zhihu.com/p/35010592
+        # [N, 13, 13, 3, 1, 2] - [1, V, 2] ==> [N, 13, 13, 3, V, 2]
         intersect_wh = tf.maximum(intersect_maxs - intersect_mins, 0.)
 
         # shape: [N, 13, 13, 3, V]
