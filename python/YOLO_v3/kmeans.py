@@ -15,7 +15,7 @@ def parse_anno(annotation_path):
         image = cv2.imread(s[0])
         image_h, image_w = image.shape[:2]
         s = s[1:]
-        box_cnt = s // 5
+        box_cnt = len(s) // 5
         
         for i in range(box_cnt):
             x_min, y_min, x_max, y_max = float(s[i*5 + 0]), float(s[i*5 + 1]), float(s[i*5 + 2]), float(s[i*5 + 3])
@@ -67,7 +67,28 @@ def kmeans(boxes, k, dist=np.median,seed=1):
 
         last_clusters = nearest_clusters
     
-    return clusters
+    return clusters, nearest_clusters, distances
+
+
+def plot_cluster_result(clusters, nearest_clusters, WithinClusterSumDist, wh, k):
+    for icluster in np.unique(nearest_clusters):
+        pick = nearest_clusters == icluster
+        c = current_palette[icluster]
+        plt.rc('font', size=8)
+        plt.plot(wh[pick, 0], wh[pick, 1],"p",
+                 color=c,
+                 alpha=0.5, label="cluster = {}, N = {:6.0f}".format(icluster, np.sum(pick)))
+        plt.text(clusters[icluster, 0],
+                 clusters[icluster, 1],
+                 "c{}".format(icluster),
+                 fontsize=20, color="red")
+        plt.title("Clusters=%d" %k)
+        plt.xlabel("width")
+        plt.ylabel("height")
+    plt.legend(title="Mean IoU = {:5.4f}".format(WithinClusterSumDist))
+    plt.tight_layout()
+    plt.savefig("./kmeans.jpg")
+    plt.show()
     
 
 if __name__ == '__main__':
@@ -81,3 +102,16 @@ if __name__ == '__main__':
     anno_result = parse_anno(dataset_txt)
 
     clusters, nearest_clusters, distances = kmeans(anno_result, args.cluster_num)
+
+    # sort by area
+    area = clusters[:, 0] * clusters[:, 1]
+    indice = np.argsort(area)
+    clusters = clusters[indice]
+    
+    with open(anchors_txt, "w") as f:
+        for i in range(args.cluster_num):
+            width, height = clusters[i]
+            f.writelines(str(width) + " " + str(height) + " ")
+
+    WithinClusterMeanDist = np.mean(distances[np.arange(distances.shape[0]), nearest_clusters])
+    plot_cluster_result(clusters, nearest_clusters, 1-WithinClusterMeanDist, anno_result, args.cluster_num)

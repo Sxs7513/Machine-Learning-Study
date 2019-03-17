@@ -214,7 +214,7 @@ class Yolov3(object):
 
     # feature_map_i 为该批次中全部的某类型的 feature_map(13 或 26 或 52)
     # y_true 同理，为对应的真实值
-    def loss_layer(self, feature_map_i, y_true, anchors)
+    def loss_layer(self, feature_map_i, y_true, anchors):
         grid_size = tf.shape(feature_map_i)[1:3]
         grid_size_ = feature_map_i.shape.as_list()[1:3]
 
@@ -300,6 +300,7 @@ class Yolov3(object):
 
         # 作者使用二元交叉熵损失来代替softmax进行预测类别，这个选择有助于把YOLO用于更复杂的领域。Open Images Dataset V4数据集中包含了大量重叠的标签（如女性和人）。
         # 如果用的是softmax，它会强加一个假设，使得每个框只包含一个类别。但通常情况下这样做是不妥的，相比之下，多标记的分类方法能更好地模拟数据。
+        # https://blog.csdn.net/tsyccnh/article/details/79163834
         class_loss = object_mask * tf.nn.sigmoid_cross_entropy_with_logits(labels=y_true[..., 5:], logits=pred_prob_logits)
         class_loss = tf.reduce_sum(class_loss) / N
 
