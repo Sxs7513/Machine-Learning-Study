@@ -2,6 +2,8 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+import matplotlib
+matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib import style
 from pprint import pprint
@@ -13,7 +15,7 @@ df = pd.read_table(
     names=[
         'Alcohol', 'Malic_acid', 'Ash', 'Alcalinity of ash', 'Magnesium', 'Total phenols',
         'Flavanoids', 'Nonflavanoid_phenols', 'Proanthocyanins', 'Color_intensity', 'Hue',
-        'OD280/OD315_of_diluted_wines', 'Proline'
+        'wines', 'Proline'
     ]
 )
 target = df.index
@@ -30,7 +32,7 @@ PC = eigvec.T[:2]
 data_transformed = np.dot(df, PC.T)
 
 # 查看降维后的数据
-fig = plt.figure(figsize=(10, 10))
+fig = plt.figure(figsize=(8, 8))
 ax0 = fig.add_subplot(111)
 ax0.scatter(data_transformed.T[0], data_transformed.T[1])
 for l, c in zip((np.unique(target)), ['red', 'green', 'blue']):
