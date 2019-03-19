@@ -344,3 +344,54 @@ class Yolov3(object):
 
         return iou
 
+
+    def _reshape(self, x_y_offset, boxes, confs, probs):
+
+        grid_size = x_y_offset.shape.as_list()[:2]
+        boxes = tf.reshape(boxes, [-1, grid_size[0]*grid_size[1]*3, 4])
+        confs = tf.reshape(confs, [-1, grid_size[0]*grid_size[1]*3, 1])
+        probs = tf.reshape(probs, [-1, grid_size[0]*grid_size[1]*3, self._NUM_CLASSES])
+
+        return boxes, confs, probs
+
+
+    def predict(self, feature_maps):
+        """
+        Note: given by feature_maps, compute the receptive field
+              and get boxes, confs and class_probs
+        input_argument: feature_maps -> [None, 13, 13, 255],
+                                        [None, 26, 26, 255],
+                                        [None, 52, 52, 255],
+        """
+        feature_map_1, feature_map_2, feature_map_3 = feature_maps
+        feature_map_anchors = [(feature_map_1, self._ANCHORS[6:9]),
+                               (feature_map_2, self._ANCHORS[3:6]),
+                               (feature_map_3, self._ANCHORS[0:3]),]
+
+        # 获得所有 feature_map 预测的所有 box，全部打平，只留下box维度
+        results = [self._reorg_layer(feature_map, anchors) for (feature_map, anchors) in feature_map_anchors]
+        boxes_list, confs_list, probs_list = [], [], []
+
+        for result in results:
+            boxes, conf_logits, prob_logits = self._reshape(*result)
+
+            confs = tf.sigmoid(conf_logits)
+            probs = tf.sigmoid(prob_logits)
+
+            boxes_list.append(boxes)
+            confs_list.append(confs)
+            probs_list.append(probs)
+
+        # 应该没什么作用
+        boxes = tf.concat(boxes_list, axis=1)
+        confs = tf.concat(confs_list, axis=1)
+        probs = tf.concat(probs_list, axis=1)
+
+        center_x, center_y, width, height = tf.split(boxes, [1,1,1,1], axis=-1)
+        x0 = center_x - width   / 2.
+        y0 = center_y - height  / 2.
+        x1 = center_x + width   / 2.
+        y1 = center_y + height  / 2.
+
+        boxes = tf.concat([x0, y0, x1, y1], axis=-1)
+        return boxes, confs, probs

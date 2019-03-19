@@ -45,3 +45,11 @@ def resize_image_correct_bbox(image, boxes, image_h, image_w):
 
     boxes = tf.stack([xx1, yy1, xx2, yy2, idx], axis=1)
     return image, boxes
+
+# 查看训练的效果
+# y_true => [3, batch_size, xx]
+def evaluate(y_pred, y_true, iou_thresh=0.5, score_thresh=0.3):
+
+    num_images  = y_true[0].shape[0]
+    num_classes = y_true[0][0][..., 5:].shape[-1]
+ 
