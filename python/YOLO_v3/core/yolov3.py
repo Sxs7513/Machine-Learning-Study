@@ -1,7 +1,7 @@
 # https://blog.csdn.net/leviopku/article/details/82660381
 import tensorflow as tf
 from core import common
-import tf.contrib.slim as slim
+slim = tf.contrib.slim
 
 
 class darknet53(object):
@@ -48,8 +48,8 @@ class darknet53(object):
         return route_1, route_2, inputs
 
 
-class Yolov3(object):
-    def __init__(self, self, num_classes, anchors, batch_norm_decay=0.9, leaky_relu=0.1):
+class yolov3(object):
+    def __init__(self, num_classes, anchors, batch_norm_decay=0.9, leaky_relu=0.1):
         # self._ANCHORS = [[10 ,13], [16 , 30], [33 , 23],
                          # [30 ,61], [62 , 45], [59 ,119],
                          # [116,90], [156,198], [373,326]]
@@ -94,7 +94,7 @@ class Yolov3(object):
         # 获得预测的 box 信息
         box_centers, box_sizes, conf_logits, prob_logits = tf.split(
             feature_map,
-            [2, 2, 1, self._NUM_CLASSES]
+            [2, 2, 1, self._NUM_CLASSES],
             axis = -1
         )
 
@@ -185,7 +185,7 @@ class Yolov3(object):
                     # 最小的 anchor，与上面同理
                     inputs = common._conv2d_fixed_padding(route, 128, 1)
                     unsample_size = route_1.get_shape().as_list()
-                    inputs = self._upsample(inputs, upsample_size)
+                    inputs = self._upsample(inputs, unsample_size)
                     inputs = tf.concat([inputs, route_1], axis=3)
 
                     route, inputs = self._yolo_block(inputs, 128)

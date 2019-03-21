@@ -5,7 +5,7 @@ def _conv2d_fixed_padding(inputs, filters, kernel_size, strides=1):
     # 大小大于 1 的卷积核即需要添加 padding
     if strides > 1:
         inputs = _fixed_padding(inputs, kernel_size)
-    inputs = slim.conv2d(inputs, filters, kernel_size, strides=strides, padding=('SAME' if strides == 1 else 'VALID'))
+    inputs = slim.conv2d(inputs, filters, kernel_size, stride=strides, padding=('SAME' if strides == 1 else 'VALID'))
 
     return inputs
 

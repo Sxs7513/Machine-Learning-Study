@@ -13,11 +13,12 @@ class Parser(object):
 
 
     def preprocess(self, image, gt_boxes):
-        # 让 image 与 truth-box 适应新的大小
+        # 让 image 与 truth-box resize到统一的大小
         image, gt_boxes = utils.resize_image_correct_bbox(image, gt_boxes, self.image_h, self.image_w)
 
         if self.debug: return image, gt_boxes
-
+        
+        # 传入 truth-box 开始进行真值生成
         y_true_13, y_true_26, y_true_52 = tf.py_func(
             self.preprocess_true_boxes, 
             inp=[gt_boxes],
@@ -31,12 +32,14 @@ class Parser(object):
 
     
     def preprocess_true_boxes(self, gt_boxes):
+        # 总共要生成几个 feature-map，这个代码毫无意义
         num_layers = len(self.anchors) // 3
         anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]]
         # 三种 feature-map 的大小
         grid_sizes = [[self.image_h//x, self.image_w//x] for x in (32 ,16, 8)]
 
         # the center of box, the height and width of box
+        # truth-box 的中心与大小
         box_centers = (gt_boxes[:, 0:2] + gt_boxes[:, 2:4]) / 2
         box_sizes = gt_boxes[:, 0:2] - gt_boxes[:, 2:4]
 
@@ -93,7 +96,7 @@ class Parser(object):
 
         return y_true_13, y_true_26, y_true_52        
 
-
+    # 取出图片与box信息，开始解析
     def parser_example(self, serialized_example):
         features = tf.parse_single_example(
             serialized_example,
@@ -128,6 +131,7 @@ class dataset(object):
         except:
             raise NotImplementedError("No tfrecords found!")    
 
+        # 执行解析函数
         self._TFRecordDataset = self._TFRecordDataset.map(
             map_func = self.parser.parser_example,
             num_parallel_calls = 10

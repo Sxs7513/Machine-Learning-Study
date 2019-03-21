@@ -47,8 +47,8 @@ def main(argv):
             if category_id >= 84 and category_id <= 90: category_id = category_id - 11
 
             x_min, y_min, width, height = annotation['bbox']
-            x_max = x_min+width
-            y_max = y_min+height
+            x_max = x_min + width
+            y_max = y_min + height
             box = [x_min, y_min, x_max, y_max]
             dataset[single_image_path].append([category_id, box])
 
