@@ -11,6 +11,7 @@ def main(flags):
         for line in f.readlines():
             example = line.split(' ')
             image_path = example[0]
+            # 一张图片里 box 的数量
             boxes_num = len(example[1:]) // 5
             boxes = np.zeros((boxes_num, 5), dtype=np.float32)
             for i in range(boxes_num):

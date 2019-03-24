@@ -1,6 +1,7 @@
 python/**/__pycache__
 
 python/train_data
+python/test_data
 
 python/CNN-Flower/data
 
@@ -27,6 +28,8 @@ python/YOLO_v2/data
 python/YOLO_v2/test
 
 python/YOLO_v3/checkpoint
+python/YOLO_v3/data/demo_data
+python/YOLO_v3/data/font
 python/YOLO_v3/data/coco/train.txt
 python/YOLO_v3/data/VOCdevkit/
 python/YOLO_v3/data/train_data/

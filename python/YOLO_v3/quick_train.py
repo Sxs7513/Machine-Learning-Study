@@ -16,8 +16,9 @@ SHUFFLE_SIZE     = 200
 CLASSES          = utils.read_classes_names('./data/%s.names' % dataset_target)
 ANCHORS          = utils.get_anchors(('./data/%s_anchors.txt' % dataset_target), IMAGE_H, IMAGE_W)
 NUM_CLASSES      = len(CLASSES)
-EVAL_INTERNAL    = 100
+EVAL_INTERNAL    = 200
 SAVE_INTERNAL    = 5000
+LOG_INTERNAL = 10
 
 train_tfrecord   = ("./data/train_data/quick_train_Data/tfrecords/%s/train.tfrecords" % dataset_target)
 test_tfrecord    = ("./data/train_data/quick_train_Data/tfrecords/%s/val.tfrecords" % dataset_target)
@@ -59,16 +60,18 @@ for epoch in range(EPOCHS):
     run_items = sess.run([train_op, y_pred, y_true] + loss, feed_dict={is_training: True})
 
     if (epoch+1) % EVAL_INTERNAL == 0:
-        train_rec_value, train_prec_value = utils.evaluate(run_items[2], run_items[3])
+        train_rec_value, train_prec_value = utils.evaluate(run_items[1], run_items[2])
 
-    if (epoch+1) % SAVE_INTERNAL == 0: saver.save(sess, save_path="./checkpoint/yolov3.ckpt", global_step=epoch+1)
+    if (epoch+1) % SAVE_INTERNAL == 0: 
+        saver.save(sess, save_path="./checkpoint/yolov3.ckpt", global_step=epoch+1)
 
-    print("=> EPOCH %10d [TRAIN]:\tloss_xy:%7.4f \tloss_wh:%7.4f \tloss_conf:%7.4f \tloss_class:%7.4f"
+    if (epoch + 1) % LOG_INTERNAL == 0:
+        print("=> EPOCH %10d [TRAIN]:\tloss_xy:%7.4f \tloss_wh:%7.4f \tloss_conf:%7.4f \tloss_class:%7.4f"
         %(epoch+1, run_items[4], run_items[5], run_items[6], run_items[7]))
 
-    run_items = sess.run([y_pred, y_true] + loss, feed_dict={is_training:False})
+    run_items = sess.run([y_pred, y_true] + loss, feed_dict={is_training: False})
     if (epoch+1) % EVAL_INTERNAL == 0:
-        test_rec_value, test_prec_value = utils.evaluate(run_items[1], run_items[2])
+        test_rec_value, test_prec_value = utils.evaluate(run_items[0], run_items[1])
         print("\n=======================> evaluation result <================================\n")
         print("=> EPOCH %10d [TRAIN]:\trecall:%7.4f \tprecision:%7.4f" %(epoch+1, train_rec_value, train_prec_value))
         print("=> EPOCH %10d [VALID]:\trecall:%7.4f \tprecision:%7.4f" %(epoch+1, test_rec_value,  test_prec_value))

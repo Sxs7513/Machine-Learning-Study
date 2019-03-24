@@ -197,7 +197,7 @@ if __name__ == '__main__':
     detector = Detector(yolo, weights_file)
 
     # detect the image
-    imagename = './test/person-car.png'
+    imagename = '../test_data/target_detection/img/miao-dog-4.jpg'
     detector.image_detect(imagename)
 
     # detect the video

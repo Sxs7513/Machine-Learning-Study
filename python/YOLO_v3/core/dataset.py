@@ -35,14 +35,15 @@ class Parser(object):
         # 总共要生成几个 feature-map，这个代码毫无意义
         num_layers = len(self.anchors) // 3
         anchor_mask = [[6,7,8], [3,4,5], [0,1,2]] if num_layers==3 else [[3,4,5], [1,2,3]]
-        # 三种 feature-map 的大小
+        # 三种 feature-map 的大小, 分别为 13, 26, 52
         grid_sizes = [[self.image_h//x, self.image_w//x] for x in (32 ,16, 8)]
 
         # the center of box, the height and width of box
         # truth-box 的中心与大小
-        box_centers = (gt_boxes[:, 0:2] + gt_boxes[:, 2:4]) / 2
-        box_sizes = gt_boxes[:, 0:2] - gt_boxes[:, 2:4]
+        box_centers = (gt_boxes[:, 0:2] + gt_boxes[:, 2:4]) / 2 
+        box_sizes =    gt_boxes[:, 2:4] - gt_boxes[:, 0:2]
 
+        # 重新赋值
         gt_boxes[:, 0:2] = box_centers
         gt_boxes[:, 2:4] = box_sizes
 
@@ -59,8 +60,11 @@ class Parser(object):
         valid_mask = box_sizes[:, 0] > 0
 
         # Discard zero rows.
+        # 找到有效的 truth-box 位置
         wh = box_sizes[valid_mask]
-        # 把 truth-box 提升一个维度，好让每个 anchor 和每个 box 进行 iou 对比
+        # 把 truth-box 提升一个维度，好让每个 anchor 和每个 truth-box 进行 iou 对比
+        # 因为提升一个维度后，就可以利用 numpy 的广播特性了
+        # 此时维度为 [N, 1, 2], 而 anchor 的维度为 [M, 2]
         wh = np.expand_dims(wh, -2)
         boxes_max = wh / 2.
         boxes_min = -boxes_max
@@ -72,9 +76,11 @@ class Parser(object):
         intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
         box_area       = wh[..., 0] * wh[..., 1]
 
+        # anchor 的面积
         anchor_area = self.anchors[:, 0] * self.anchors[:, 1]
+        #  计算每个 truth-box 与 anchor 的 iou，shape 为 [N, M, 2]
         iou = intersect_area / (box_area + anchor_area - intersect_area)
-        # 找到每个 box 是第几个 anchor 与其最像
+        # 找到每个 truth-box 与第几个 anchor 最像
         best_anchor = np.argmax(iou, axis=-1)
 
         for t, n in enumerate(best_anchor):
@@ -82,17 +88,20 @@ class Parser(object):
                 # 只与最接近的的 feature-map 匹配
                 if n not in anchor_mask[l]: continue
                 
-                # 计算 box 中心在特征图的哪个位置
-                i = np.floor(gt_boxes[t, 0] / self.image_w * grid_sizes[l, 1]).astype('int32')
-                j = np.floor(gt_boxes[t, 1] / self.image_h * grid_sizes[l, 0]).astype('int32')
+                # 计算 box 中心在特征图的哪个位置, 注意需要四舍五入，因为特征图里面
+                # 每个点对应原图里的一个 cell，即一个区域
+                i = np.floor(gt_boxes[t,0] / self.image_w * grid_sizes[l][1]).astype('int32')
+                j = np.floor(gt_boxes[t,1] / self.image_h * grid_sizes[l][0]).astype('int32')
 
                 k = anchor_mask[l].index(n)
                 c = gt_boxes[t, 4].astype('int32')
                 
-                # 边框真实的位置与大小
+                # 在对应 feature-map 上面的对应位置的对应 anchor 处坐上标记
                 y_true[l][j, i, k, 0:4] = gt_boxes[t, 0:4]
                 y_true[l][j, i, k,   4] = 1.
                 y_true[l][j, i, k, 5+c] = 1.
+                
+
 
         return y_true_13, y_true_26, y_true_52        
 
@@ -110,6 +119,7 @@ class Parser(object):
         image = tf.image.convert_image_dtype(image, tf.uint8)
 
         gt_boxes = tf.decode_raw(features['boxes'], tf.float32)
+        # 重新 reshape 一下，因为在 convert_tfrecord 中会给它多套一层
         gt_boxes = tf.reshape(gt_boxes, shape=[-1,5])
 
         return self.preprocess(image, gt_boxes)
