@@ -19,6 +19,7 @@ class Parser(object):
         bboxes = tf.clip_by_value(bboxes, 0, 1)
         # begin, size 用来 tf.slice 裁剪图像
         # dist_boxes shape为 [1, 1, 4] 的三维矩阵，数据类型为float32，表示随机变形后的边界框
+        # 注意这个边界框并不指的是 gt_box 哦，指的是原图裁剪后的大小位置
         begin, size, dist_boxes = tf.image.sample_distorted_bounding_box(
             tf.shape(image),
             bounding_boxes=tf.expand_dims(bboxes, axis=0),
@@ -34,7 +35,17 @@ class Parser(object):
         # 所以要把它还原为正常大小。
         croped_box = [dist_boxes[0,0,1] * w, dist_boxes[0,0,0] * h, dist_boxes[0,0,3] * w, dist_boxes[0,0,2] * h]
 
-        croped_xmin = tf.clip_by_value(xmin, )      
+        # 知道了 dist_boxes 真正指的是什么，就不难理解下面的代码了
+        # 就是让 gt_box 适应裁剪后的图片的大小
+        croped_xmin = tf.clip_by_value(xmin, croped_box[0], croped_box[2])-croped_box[0]
+        croped_ymin = tf.clip_by_value(ymin, croped_box[1], croped_box[3])-croped_box[1]
+        croped_xmax = tf.clip_by_value(xmax, croped_box[0], croped_box[2])-croped_box[0]
+        croped_ymax = tf.clip_by_value(ymax, croped_box[1], croped_box[3])-croped_box[1]
+
+        image = tf.slice(image, begin, size)
+        gt_boxes = tf.stack([croped_xmin, croped_ymin, croped_xmax, croped_ymax, label], axis=1)
+
+        return image, gt_boxes     
 
 
     def preprocess(self, image, gt_boxes):
