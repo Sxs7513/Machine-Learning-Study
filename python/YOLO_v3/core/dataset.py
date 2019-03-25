@@ -11,6 +11,31 @@ class Parser(object):
         self.image_w     = image_w
         self.debug       = debug
 
+    
+    def random_crop(self, image, gt_boxes, min_object_covered=0.8, aspect_ratio_range=[0.8, 1.2], area_range=[0.5, 1.0]):
+        h, w = tf.cast(tf.shape(image)[0], tf.float32), tf.cast(tf.shape(image)[1], tf.float32)
+        xmin, ymin, xmax, ymax = tf.unstack(gt_boxes, axis=1)
+        boxes = tf.stack([ ymin/h, xmin/w, ymax/h, xmax/w ], axis=1)
+        bboxes = tf.clip_by_value(bboxes, 0, 1)
+        # begin, size 用来 tf.slice 裁剪图像
+        # dist_boxes shape为 [1, 1, 4] 的三维矩阵，数据类型为float32，表示随机变形后的边界框
+        begin, size, dist_boxes = tf.image.sample_distorted_bounding_box(
+            tf.shape(image),
+            bounding_boxes=tf.expand_dims(bboxes, axis=0),
+            # 代表剪切的图像可以与bboxes无重叠区域
+            min_object_covered=min_object_covered,
+            # 代表剪切的图像宽高比 aspect_ratio = width / height必须在aspect_ratio_range范围
+            aspect_ratio_range=aspect_ratio_range,
+            # 代表剪切区域必须包含area range大小的原有图像
+            area_range=area_range
+        )
+
+        # dist_boxes 是 0-1 之间的，tf.image.draw_bounding_boxes以可视化边界框的外观
+        # 所以要把它还原为正常大小。
+        croped_box = [dist_boxes[0,0,1] * w, dist_boxes[0,0,0] * h, dist_boxes[0,0,3] * w, dist_boxes[0,0,2] * h]
+
+        croped_xmin = tf.clip_by_value(xmin, )      
+
 
     def preprocess(self, image, gt_boxes):
         # 让 image 与 truth-box resize到统一的大小

@@ -73,6 +73,7 @@ def draw_boxes(image, boxes, scores, labels, classes, detection_size, font='./da
     for i in range(len(labels)):
         bbox, score, label = boxes[i], scores[i], classes[labels[i]]
         bbox_text = "%s %.2f" %(label, score)
+        print(bbox_text)
         text_size = draw.textsize(bbox_text, font)
         # convert_to_original_size
         detection_size, original_size = np.array(detection_size), np.array(image.size)
@@ -80,8 +81,9 @@ def draw_boxes(image, boxes, scores, labels, classes, detection_size, font='./da
         bbox = list((bbox.reshape(2,2) * ratio).reshape(-1))
 
         draw.rectangle(bbox, outline=colors[labels[i]], width=3)
-        text_origin = bbox[:2]-np.array([0, text_size[1]])
-        draw.rectangle([tuple(text_origin), tuple(text_origin+text_size)], fill=colors[labels[i]])
+        # text_origin = bbox[:2] - np.array([0, text_size[1]])
+        text_origin = bbox[:2] + np.array([0, text_size[1]])
+        draw.rectangle([tuple(text_origin), tuple(text_origin + text_size)], fill=colors[labels[i]])
         # # draw bbox
         draw.text(tuple(text_origin), bbox_text, fill=(0,0,0), font=font)
     
