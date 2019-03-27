@@ -45,10 +45,53 @@ class Parser(object):
         image = tf.slice(image, begin, size)
         gt_boxes = tf.stack([croped_xmin, croped_ymin, croped_xmax, croped_ymax, label], axis=1)
 
-        return image, gt_boxes     
+        return image, gt_boxes
+
+
+    def flip_left_right(self, image, gt_boxes):
+        w = tf.cast(tf.shape(image)[1], tf.float32)
+        image = tf.image.flip_left_right(image)
+
+        # gt_box 也要翻转
+        xmin, ymin, xmax, ymax, label = tf.unstack(gt_boxes, axis=1)
+        xmin, ymin, xmax, ymax = w-xmax, ymin, w-xmin, ymax
+        gt_boxes = tf.stack([xmin, ymin, xmax, ymax, label], axis=1)
+
+        return image, gt_boxes
+
+
+    def random_distort_color(self, image, gt_boxes):
+
+        image = tf.image.random_brightness(image, max_delta=32./255.)
+        image = tf.image.random_saturation(image, lower=0.8, upper=1.2)
+        image = tf.image.random_hue(image, max_delta=0.2)
+        image = tf.image.random_contrast(image, lower=0.8, upper=1.2)
+
+        return image, gt_boxes
+
+    
+    def random_blur(self, image, gt_boxes):
+
+        gaussian_blur = lambda image: cv2.GaussianBlur(image, (5, 5), 0)
+        h, w = image.shape.as_list()[:2]
+        image = tf.py_func(gaussian_blur, [image], tf.uint8)
+        image.set_shape([h, w, 3])
+
+        return image, gt_boxes
 
 
     def preprocess(self, image, gt_boxes):
+        ################################# data augmentation ##################################
+        data_aug_flag = tf.to_int32(tf.random_uniform(shape=[], minval=-5, maxval=5))
+
+        # tf.case => https://blog.csdn.net/u012436149/article/details/60780727
+        caseO = tf.equal(data_aug_flag, 1), lambda: self.flip_left_right(image, gt_boxes)
+        case1 = tf.equal(data_aug_flag, 2), lambda: self.random_distort_color(image, gt_boxes)
+        case2 = tf.equal(data_aug_flag, 3), lambda: self.random_blur(image, gt_boxes)
+        case3 = tf.equal(data_aug_flag, 4), lambda: self.random_crop(image, gt_boxes)
+
+        image, gt_boxes = tf.case([caseO, case1, case2, case3], lambda: (image, gt_boxes))
+
         # 让 image 与 truth-box resize到统一的大小
         image, gt_boxes = utils.resize_image_correct_bbox(image, gt_boxes, self.image_h, self.image_w)
 

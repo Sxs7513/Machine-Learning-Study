@@ -4,9 +4,9 @@ import time
 import numpy as np
 import imgaug
 
-# from pycocotools.coco import COCO
-# from pycocotools.cocoeval import COCOeval
-# from pycocotools import mask as maskUtils
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+from pycocotools import mask as maskUtils
 
 import zipfile
 import urllib.request
@@ -53,7 +53,7 @@ class CocoDataset(utils.Dataset):
     # class_map => TODO：尚未实现。支持将不同数据集中的类映射到相同的类ID
     def load_coco(self, dataset_dir, subset, year=DEFAULT_DATASET_YEAR, class_ids=None, class_map=None, return_coco=False, auto_download=False):
 
-        coco = COCO("{}/annotations/instances_{}{}.json".format(dataset_dir, subset, year))
+        coco = COCO("{}/annotations_trainval2017/annotations/instances_{}{}.json".format(dataset_dir, subset, year))
         if subset == 'minival' or subset == 'valminusminival':
             subset = 'val'
         image_dir = "{}/{}{}".format(dataset_dir, subset, year)
@@ -61,7 +61,8 @@ class CocoDataset(utils.Dataset):
         # 如果没有指定某个类别, 那么获取全部的类别数据
         if not class_ids:
             class_ids = sorted(coco.getCatIds())
-
+        print("class_ids")
+        print(class_ids)
         # 加载全部图像编号
         if class_ids:
             image_ids = []
@@ -106,7 +107,8 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--dataset', 
-        required=True,
+        required=False,
+        default=os.path.join(os.path.dirname(__file__), '../../../train_data/COCO/'),
         metavar="/path/to/coco/",
         help='Directory of the MS-COCO dataset'
     )
@@ -117,7 +119,7 @@ if __name__ == '__main__':
         help='Year of the MS-COCO dataset (2014 or 2017) (default=2014)'
     )
     parser.add_argument(
-        '--model', required=True,
+        '--model', required=False,
         metavar="/path/to/weights.h5",
         help="Path to weights .h5 file or 'coco'"
     )
