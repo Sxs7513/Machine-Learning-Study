@@ -58,6 +58,48 @@ class Dataset(object):
         image_info.update(kwargs)
         self.image_info.append(image_info)
 
-    
+    # 洗数据
     def prepare(self, class_map=None):
-        return
+        """
+        TODO: class map is not supported yet. When done, it should handle mapping
+              classes from different datasets to the same class ID.
+        """
+
+        def clean_name(name):
+            return ",".join(name.split(",")[:1])
+
+        self.num_classes = len(self.class_info)
+        # pycocotools 给的类别 id 不是连续的, 所以有 90 个
+        # 真实其实只有 80 个，这里给重新赋予 id
+        self.class_ids = np.arange(self.num_classes)
+        self.class_names = [clean_name(c["name"]) for c in self.class_info]
+        # image 也重新赋予 id
+        self.num_images = len(self.image_info)
+        self._image_ids = np.arange(self.num_images)
+
+        # key => source.origin_class_id 
+        # value => new_class_id
+        self.class_from_source_map = {
+            "{}.{}".format(info['source'], info['id']): id
+            for info, id in zip(self.class_info, self.class_ids)
+        }
+        # key => source.origin_image_id
+        # value => new_image_id
+        self.image_from_source_map = {
+            "{}.{}".format(info['source'], info['id']): id
+            for info, id in zip(self.image_info, self.image_ids)
+        }
+
+        self.sources = list(set(i["source"] for i in self.class_info))
+        # key => source
+        # value => new_class_id
+        self.source_class_ids = {}
+
+        for source in self.sources:
+            self.source_class_ids[source] = []
+            for i, info in enumerate(self.class_info):
+                # 包括背景
+                if i == 0 or source == info['source']:
+                    self.source_class_ids[source].append(i)
+
+        

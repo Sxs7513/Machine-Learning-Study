@@ -61,8 +61,7 @@ class CocoDataset(utils.Dataset):
         # 如果没有指定某个类别, 那么获取全部的类别数据
         if not class_ids:
             class_ids = sorted(coco.getCatIds())
-        print("class_ids")
-        print(class_ids)
+
         # 加载全部图像编号
         if class_ids:
             image_ids = []
@@ -172,4 +171,15 @@ if __name__ == '__main__':
         dataset_train.load_coco(args.dataset, "train", year=args.year, auto_download=args.download)
         if args.year in '2014':
             dataset_train.load_coco(args.dataset, "valminusminival", year=args.year, auto_download=args.download)
-        # dataset_train.prepare()
+        dataset_train.prepare()
+
+        # Validation dataset
+        dataset_val = CocoDataset()
+        val_type = "val" if args.year in '2017' else "minival"
+        dataset_val.load_coco(args.dataset, val_type, year=args.year, auto_download=args.download)
+        dataset_val.prepare()
+
+        augmentation = imgaug.augmenters.Fliplr(0.5)
+
+        # Training - Stage 1
+        print("Training network heads")
