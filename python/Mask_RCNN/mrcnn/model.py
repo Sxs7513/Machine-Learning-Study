@@ -14,7 +14,7 @@ import keras.layers as KL
 import keras.engine as KE
 import keras.models as KM
 
-# from mrcnn import utils
+from mrcnn import utils
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
@@ -37,6 +37,20 @@ class BatchNorm(KL.BatchNormalization):
     # 模拟 keras 的调用方式
     def call(self, inputs, training=None):
         return super(self.__class__, self).call(inputs, training=training)
+
+
+# 计算 image 在经过 resnet 后，各个 feature_map 的大小
+# 总共要计算 5 个 feature_map
+def compute_backbone_shapes(config, image_shape):
+    if callable(config.BACKBONE):
+        return config.COMPUTE_BACKBONE_SHAPE(image_shape)
+
+    assert config.BACKBONE in ["resnet50", "resnet101"]
+    return np.array([
+        [int(math.ceil(image_shape[0] / stride)), int(math.ceil(image_shape[1] / stride))]
+        for stride in config.BACKBONE_STRIDES
+    ])    
+
 
 
 ############################################################
@@ -148,6 +162,120 @@ def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
     return [C1, C2, C3, C4, C5]
 
 
+
+############################################################
+#  Proposal Layer
+############################################################
+
+# 作用是将预测的边框回归应用在 anchor 上面, 获得 anchor 经回归后的坐标
+# boxes => 在图片大小为 1024 * 1024 的情况下为 [261888, 4] (y1, x1, y2, x2)
+# deltas => [261888, 4] (dy, dx, log(dh), log(dw)) 
+def apply_box_deltas_graph(boxes, deltas):
+    height = boxes[:, 2] - boxes[:, 0]
+    width = boxes[:, 3] - boxes[:, 1]
+    center_y = boxes[:, 0] + 0.5 * height
+    center_x = boxes[:, 1] + 0.5 * width
+    # apply deltas
+    height *= tf.exp(deltas[:, 2])
+    width *= tf.exp(deltas[:, 3])
+    center_y += deltas[:, 0] * height
+    center_x += deltas[:, 1] * width
+    # Convert back to y1, x1, y2, x2
+    y1 = center_y - 0.5 * height
+    x1 = center_x - 0.5 * width
+    y2 = y1 + height
+    x2 = x1 + width
+    result = tf.stack([y1, x1, y2, x2], axis=-1, name="apply_box_deltas_out")
+    return result
+
+
+class ProposalLayer(KE.Layer):
+    # proposal_count => 经过 nms 之后保留多少 ROIs
+    # nms_threshold => nms 阈值, 不必多说
+    def __init__(self, proposal_count, nms_threshold, config=None, **kwargs):
+        super(ProposalLayer, self).__init__(**kwargs)
+        self.config = config
+        self.proposal_count = proposal_count
+        self.nms_threshold = nms_threshold
+
+    
+    # inputs => rpn_class, rpn_bbox, anchors
+    # rpn_class => [N, AV, 2]  AV 是五个 feature_map 所有 anchors 的数量
+    # rpn_bbox => [N, AV, 4]
+    # anchors => 在图片大小为 1024 * 1024 的情况下为 [N, 261888, 4]
+    def call(self, inputs):
+        # 取出前景得分 [N, AV, 1]
+        scores = inputs[0][:, :, 1]
+        # 取出 bbox 预测, 并
+        deltas = inputs[1]
+        deltas = deltas * np.reshape(config.RPN_BBOX_STD_DEV, [1, 1, 4])
+        # 取出 anchors
+        anchors = inputs[2]
+
+        # 保险起见, 一般不会发生, 总不至于 6000 个 anhcor 都提取不出来吧?
+        pre_nms_limit = tf.minimum(self.config.PRE_NMS_LIMIT, tf.shape(anchors)[1])
+        # 找到分最高的 anchor 的 index
+        ix = tf.nn.top_k(scores, pre_nms_limit, sorted=True, name="top_anchors").indices
+        # tf.gather 不支持 batch, 所以 hack 下, 选择出来对应的得分
+        scores = utils.batch_slice([scores, ix], lambda x, y: tf.gather(x, y), self.config.IMAGES_PER_GPU)
+        # 同理, 对应的 bbox
+        deltas = utils.batch_slice([deltas, ix], lambda x, y: tf.gather(x, y), self.config.IMAGES_PER_GPU)
+        # 对应的 anchor
+        pre_nms_anchors = utils.batch_slice([anchors, ix], lambda a, x: tf.gather(a, x), self.config.IMAGES_PER_GPU, names=["pre_nms_anchors"])
+        # 到此, 已选出来 N * PRE_NMS_LIMIT 个 anchor 及其对应的前景得分与 bbox
+
+        # 将预测的边框回归应用到 boxes 上面
+        boxes = utils.batch_slice(
+            [pre_nms_anchors, deltas],
+            lambda x, y:apply_box_deltas_graph(x, y),
+            self.config.IMAGES_PER_GPU,
+            names=["refined_anchors"]
+        )
+
+
+############################################################
+#  Region Proposal Network (RPN)
+############################################################
+
+# 与 Faster-RCNN 原理一致, 里面不做多解释
+# feature_map => [N, None, None, 256]
+# anchors_per_location => 默认为 3
+# anchor_stride => 默认为 1
+def rpn_graph(feature_map, anchors_per_location, anchor_stride):
+    # 与 Faster-RCNN 一致, 先经过一个卷积层, 原因未知
+    shared = KL.Conv2D(512, (3, 3), padding="same", activation='relu', strides=anchor_stride, name='rpn_conv_shared')(feature_map)
+    # 与 Faster-RCNN 一致, 前景背景得分, 每个 anchor 预测两个分
+    # [N, height, width, 2 * anchors_per_location]
+    x = KL.Conv2D(2 * anchors_per_location, kernel_size=(1, 1), padding='valid', activation='linear', name='rpn_class_raw')(shared)
+
+    # [N, V, 2]  V 是该特征图里 anchor 的数量
+    rpn_class_logits = KL.Lambda(lambda t: tf.reshape(t, [t.shape[0], -1, 2]))(x)
+    # [N, V, 2] 
+    rpn_probs = KL.Activation("softmax", name="rpn_class_xxx")(rpn_class_logits)
+
+    # [N, height, width, 4 * anchors_per_location]
+    x = KL.Conv2D(anchors_per_location * 4, kernel_size=(1, 1), padding="valid", activation='linear', name='rpn_bbox_pred')
+    # [N, V, 4]
+    rpn_bbox = KL.Lambda(lambda t: tf.reshape(t, [tf.shape(t)[0], -1, 4]))(x)
+
+    return [rpn_class_logits, rpn_probs, rpn_bbox]
+
+
+# 调用 rpn_graph 生成 rpn 网络, 然后封装成模型, 用于为 ProposalLayer 层
+# 提供寻找推荐框的数据, 与 Faster-RCNN 基本一致
+# anchor_stride => 每隔几个 cell 创建 anchors，默认为 1
+# anchors_per_location =>  每个 cell 提取的几个 anchor, 默认为 3
+# depth => 特征图的层数, 均为 256 层
+def build_rpn_model(anchor_stride, anchors_per_location, depth):
+    input_feature_map = KL.Input(
+        shape=[None, None, depth],
+        name="input_rpn_feature_map"
+    )
+    outputs = rpn_graph(input_feature_map, anchors_per_location, anchor_stride)
+    return KM.Model([input_feature_map], outputs, name="rpn_model")
+
+
+
 ############################################################
 #  MaskRCNN Class
 ############################################################
@@ -227,7 +355,8 @@ class MaskRCNN():
             KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (1, 1), name='fpn_c2p2')(C2)
         ])
 
-        # 上面生成的所有特征图全部走一遍 3 * 3 卷积，但是保持原大小，此时特征图生成完毕
+        # 上面生成的所有特征图全部走一遍 3 * 3 卷积，全部变成 256 层 (channel 维度变成 256)
+        # 但是保持原大小，此时特征图生成完毕
         P2 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p2")(P2)
         P3 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p3")(P3)
         P4 = KL.Conv2D(config.TOP_DOWN_PYRAMID_SIZE, (3, 3), padding="SAME", name="fpn_p4")(P4)
@@ -235,6 +364,68 @@ class MaskRCNN():
         # P6 的作用是 xx
         # [N, 16, 16, 256]
         P6 = KL.MaxPooling2D(pool_size=(1, 1), strides=2, name="fpn_p6")(P5)
+
+        # P6 只用于 rpn 推荐 anchor，并不用于之后的分类
+        rpn_feature_maps = [P2, P3, P4, P5, P6]
+        mrcnn_feature_maps = [P2, P3, P4, P5]
+
+        # Anchors
+        if mode == 'training':
+            anchors = self.get_anchors(config.IMAGE_SHAPE)
+            # 上面生成的 anchors 是针对一张原图的，但是可能是多张图同时训练
+            # 所以需要为每张图都生成 anchors, 在 batchSize 为 2 的时候, anchors => [2, 261888, 4]
+            # 为什么这么做是因为 keras 需要这样
+            anchors = np.broadcast_to(anchors, (config.BATCH_SIZE,) + anchors.shape)
+            # 
+            anchors = KL.Lambda(lambda x: tf.Variable(anchors), name="anchors")(input_image)
+        else:
+            anchors = input_anchors
+
+        # RPN Model, 用于为 ProposalLayer 层提供寻找推荐框的数据
+        rpn = build_rpn_model(config.RPN_ANCHOR_STRIDE, len(config.RPN_ANCHOR_RATIOS), config.TOP_DOWN_PYRAMID_SIZE)
+        layer_outputs = []
+        # 五个 feature_map 全部扔进 rnp 网络中, 得到模型输出
+        # 每个 feature_map 会输出三个矩阵, 分别是 "rpn_class_logits", "rpn_class", "rpn_bbox"
+        # rpn_class_logits => [N, V, 2]  V 是某个 feature_map 中所有 anchors 的数量
+        # rpn_class => [N, V, 2]    rpn_bbox => [N, V, 4]
+        for p in rpn_feature_maps:
+            layer_outputs.append(rpn([p]))
+
+        output_names = ["rpn_class_logits", "rpn_class", "rpn_bbox"]
+        # 每个 feature_map 经过 rpn 网络后, 都会输出 "rpn_class_logits", "rpn_class", "rpn_bbox"
+        # 但是我们希望将比如五个 rpn_class_logits 放到一起, 就像 [[a1, b1, c1], [a2, b2, c2]] => [[a1, a2], [b1, b2], [c1, c2]]
+        outputs = list(zip(*layer_outputs))
+        outputs = [
+            # 此时 o 是一个列表, 以 rpn_class 为例, 该列表包含了五个 feature_map 的 rpn_class
+            # 那么将它们在 V 这个维度拼接起来, 合并为一个, 其他的同理
+            KL.Concatenate(axis=1, name=n)(list(o))
+            for o, n in zip(outputs, output_names)
+        ]
+
+        # 要进入 ProposalLayer 层的数据 
+        # rpn_class_logits => [N, AV, 2]  AV 是五个 feature_map 所有 anchors 的数量 
+        # rpn_class => [N, AV, 2]
+        # rpn_bbox => [N, AV, 4]
+        rpn_class_logits, rpn_class, rpn_bbox = outputs
+
+        # 找推荐框时 non-maximum suppression之后保留多少 ROIs
+        proposal_count = config.POST_NMS_ROIS_TRAINING if mode == "training"\
+            else config.POST_NMS_ROIS_INFERENCE
+        rpn_rois = ProposalLayer(
+            proposal_count=proposal_count,
+            nms_threshold=config.RPN_NMS_THRESHOLD,
+            name="ROI",
+            config=config)([rpn_class, rpn_bbox, anchors]
+        )([rpn_class, rpn_bbox, anchors])
+
+        if mode == 'training':
+            # 
+            active_class_ids = KL.Lambda(lambda x: parse_image_meta_graph(x)["active_class_ids"])(input_image_meta)
+
+            if not config.USE_RPN_ROIS:
+                # 这个会有人用吗, 想卡死?
+                pass
+
 
 
     # 初始化保存模型的路径，并且如果指定了 model_path，那么尝试从文件名中还原 epoch 步数
@@ -260,3 +451,52 @@ class MaskRCNN():
             "mask_rcnn_{}_*epoch*.h5".format(self.config.NAME.lower())
         )
         self.checkpoint_path = self.checkpoint_path.replace("*epoch*", "{epoch:04d}")
+
+    
+    # 作用是生成 5 个特征图的所有坐标归一化后的 anchors
+    def get_anchors(self, image_shape):
+        # 计算 6 个 feature_map 的大小
+        backbone_shapes = compute_backbone_shapes(self.config, image_shape)
+        if not hasattr(self, "_anchor_cache"):
+            # 存储着每种原图大小(1024, 1024)对应的所有 anchors
+            self._anchor_cache = {}
+        # 生成一次即可，会缓存起来
+        if not tuple(config.IMAGE_SHAPE) in self._anchor_cache:
+            # 生成五个特征图的所有 anchors，大小位置相对于原图
+            # 对于 1024 * 1024 的原图, a => [261888 , 4]
+            a = utils.generate_pyramid_anchors(
+                self.config.RPN_ANCHOR_SCALES,
+                self.config.RPN_ANCHOR_RATIOS,
+                backbone_shapes,
+                self.config.BACKBONE_STRIDES,
+                self.config.RPN_ANCHOR_STRIDE
+            )
+            self.anchors = a
+            self._anchor_cache[tuple(image_shape)] = utils.norm_boxes(a, image_shape[:2])
+        
+        return self._anchor_cache[tuple(image_shape)]
+
+
+
+############################################################
+#  Data Formatting
+############################################################
+
+# 从 meta 中提取每一张图片的原始信息, 具体都啥意思回头来写
+def parse_image_meta_graph(meta):
+    image_id = meta[:, 0]
+    original_image_shape = meta[:, 1:4]
+    image_shape = meta[:, 4:7]
+    # (y1, x1, y2, x2) window of image in in pixels
+    window = meta[:, 7:11]
+    scale = meta[:, 11]
+    active_class_ids = meta[:, 12:]
+
+    return {
+        "image_id": image_id,
+        "original_image_shape": original_image_shape,
+        "image_shape": image_shape,
+        "window": window,
+        "scale": scale,
+        "active_class_ids": active_class_ids,
+    }

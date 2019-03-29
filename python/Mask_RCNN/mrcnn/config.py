@@ -50,33 +50,31 @@ class Config(object):
     # See model.compute_backbone_shapes
     COMPUTE_BACKBONE_SHAPE = None
 
-    # The strides of each layer of the FPN Pyramid. These values
-    # are based on a Resnet101 backbone.
+    # 经过 reset 网络后提取的 5 个 feature_map 相比原图缩小的比例
     BACKBONE_STRIDES = [4, 8, 16, 32, 64]
 
     # Size of the fully-connected layers in the classification graph
     FPN_CLASSIF_FC_LAYERS_SIZE = 1024
 
     # Size of the top-down layers used to build the feature pyramid
+    # 提取的特征图的层数, 五个都为 256 层, 即 channel 维度
     TOP_DOWN_PYRAMID_SIZE = 256
 
     # Number of classification classes (including background)
     NUM_CLASSES = 1  # Override in sub-classes
 
-    # Length of square anchor side in pixels
+    # anchor 的边长，单位是像素
     RPN_ANCHOR_SCALES = (32, 64, 128, 256, 512)
 
-    # Ratios of anchors at each cell (width/height)
-    # A value of 1 represents a square anchor, and 0.5 is a wide anchor
+    # 每个 cell 提取的三个 anchor 的宽高比，1 代表是方形
     RPN_ANCHOR_RATIOS = [0.5, 1, 2]
 
-    # Anchor stride
-    # If 1 then anchors are created for each cell in the backbone feature map.
-    # If 2, then anchors are created for every other cell, and so on.
+    # 如果为 1，则在 backbone_feature_map 中每隔一个 cell 创建 anchors.
+    # 如果为 2，则在 backbone_feature_map 中每隔两个 cell 创建 anchors, 以此类推.
     RPN_ANCHOR_STRIDE = 1
 
-    # Non-max suppression threshold to filter RPN proposals.
-    # You can increase this during training to generate more propsals.
+    # Non-max suppression 过滤 RPN proposals 时的阈值.
+    # 可以增大它来获得更多的 proposals, 因为非极大值抑制是超过阈值才会过滤掉
     RPN_NMS_THRESHOLD = 0.7
 
     # How many anchors per image to use for RPN training
@@ -85,7 +83,7 @@ class Config(object):
     # ROIs kept after tf.nn.top_k and before non-maximum suppression
     PRE_NMS_LIMIT = 6000
 
-    # ROIs kept after non-maximum suppression (training and inference)
+    # 找推荐框时 non-maximum suppression之后保留多少 ROIs (训练和预测)
     POST_NMS_ROIS_TRAINING = 2000
     POST_NMS_ROIS_INFERENCE = 1000
 
@@ -151,7 +149,7 @@ class Config(object):
     # Maximum number of ground truth instances to use in one image
     MAX_GT_INSTANCES = 100
 
-    # Bounding box refinement standard deviation for RPN and final detections.
+    # RPN 和最终检测的 Bounding box refinement 的标准差
     RPN_BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
     BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
 
