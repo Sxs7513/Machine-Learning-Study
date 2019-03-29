@@ -335,7 +335,7 @@ class MaskRCNN():
                 train_bn=config.TRAIN_BN
             )
 
-        # 获得最终的多层特征图，与 yoloV3 原理一致，在此不多解释
+        # 获得最终的多层特征图，把高层的特征传下来，补充低层的语义，这样就可以获得高分辨率、强语义的特征，有利于小目标的检测
         # [N, 32, 32, 256]
         P5 = KL.Conv2D(filters=config.TOP_DOWN_PYRAMID_SIZE, kernel_size=(1, 1), name='fpn_c5p5')(C5)
         # [N, 64, 64, 256] + [N, 64, 64, 256] = [N, 64, 64, 256]    
