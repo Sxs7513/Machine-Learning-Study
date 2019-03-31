@@ -197,10 +197,10 @@ if __name__ == '__main__':
     detector = Detector(yolo, weights_file)
 
     # detect the image
-    imagename = '../test_data/target_detection/img/miao-dog-4.jpg'
-    detector.image_detect(imagename)
+    # imagename = '../test_data/target_detection/img/miao-dog-4.jpg'
+    # detector.image_detect(imagename)
 
     # detect the video
-    # cap = cv2.VideoCapture('./test/V000.seq')
+    cap = cv2.VideoCapture('../test_data/target_detection/video/V000.seq')
     # cap = cv2.VideoCapture(0)
-    # detector.video_detect(cap)
+    detector.video_detect(cap)

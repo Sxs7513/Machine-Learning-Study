@@ -7,7 +7,7 @@ from core import utils
 
 
 IMAGE_H, IMAGE_W = 416, 416
-video_path = "../YOLO_v2/test/V000.seq"
+video_path = "../test_data/target_detection/video/V000.seq"
 # video_path = 0 # use camera
 classes = utils.read_coco_names('./data/coco.names')
 num_classes = len(classes)

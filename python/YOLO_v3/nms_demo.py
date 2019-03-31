@@ -9,7 +9,7 @@ EPOCHS = 3
 # SIZE = [608, 608]
 classes = utils.read_coco_names('./data/coco.names')
 num_classes = len(classes)
-image_path = "../test_data/target_detection/img/dinner2.jpg"
+image_path = "../test_data/target_detection/img/pizza.jpg"
 img = Image.open(image_path)
 img_resized = np.array(img.resize(size=(IMAGE_H, IMAGE_W)), dtype=np.float32)
 img_resized = img_resized / 255.

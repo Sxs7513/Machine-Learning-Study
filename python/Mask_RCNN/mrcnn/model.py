@@ -189,6 +189,23 @@ def apply_box_deltas_graph(boxes, deltas):
     return result
 
 
+# 作用是保证 boxes 都在原图内，不会出现负数
+# boxes => [261888, 4]
+# window => np.array([0, 0, 1, 1])
+def clip_boxes_graph(boxes, window):
+    wy1, wx1, wy2, wx2 = tf.split(window, 4)
+    y1, x1, y2, x2 = tf.split(boxes, 4, axis=-1)
+
+    y1 = tf.maximum(tf.minimum(y1, wy2), wy1)
+    x1 = tf.maximum(tf.minimum(x1, wx2), wx1)
+    y2 = tf.maximum(tf.minimum(y2, wy2), wy1)
+    x2 = tf.maximum(tf.minimum(x2, wx2), wx1)
+    clipped = tf.concat([y1, x1, y2, x2], axis=1, name="clipped_boxes")
+    clipped.set_shape((clipped.shape[0], 4))
+    return clipped
+
+
+# ProposalLayer 网络层，属于自定义层，起到初步选择推荐框的作用
 class ProposalLayer(KE.Layer):
     # proposal_count => 经过 nms 之后保留多少 ROIs
     # nms_threshold => nms 阈值, 不必多说
@@ -231,6 +248,59 @@ class ProposalLayer(KE.Layer):
             self.config.IMAGES_PER_GPU,
             names=["refined_anchors"]
         )
+
+        # 保证 boxes 区域都在原图内
+        window = np.array([0, 0, 1, 1], dtype=np.float32)
+        boxes = utils.batch_slice(
+            [boxes, window],
+            lambda x, y: clip_boxes_graph(x, y),
+            self.config.IMAGES_PER_GPU,
+            names=["refined_anchors_clipped"]
+        )
+
+        # 对每个 batch 进行非极大值抑制
+        def nms(boxes, scores):
+            indices = tf.image.non_max_suppression(
+                boxes, scores, self.proposal_count,
+                self.nms_threshold, name="rpn_non_max_suppression"
+            )
+            proposals = tf.gather(boxes, indices)
+            # 如果数量不够的话，计算填充几个空的推荐框
+            padding = tf.maximum(self.proposal_count - tf.shape(proposals)[0], 0)
+            # 表示增加多少个，可以用 numpy 试一下就知道怎么回事了，tf 和 numpy 这个方法实现一样
+            proposals = tf.pad(proposals, [(0, padding), (0, 0)])
+            return proposals
+        proposals = utils.batch_slice([boxes, scores], nms, self.config.IMAGES_PER_GPU)
+
+        return proposals
+
+    
+    def compute_output_shape(self, input_shape):
+        return (None, self.proposal_count, 4)
+
+
+
+
+############################################################
+#  Detection Target Layer
+############################################################
+
+# 
+class DetectionTargetLayer(KE.Layer):
+    def __init__(self, config, **kwargs):
+        super(DetectionTargetLayer, self).__init__(**kwargs)
+        self.config = config
+
+    
+    def call(self, input):
+        # [N, proposal_count, 4]
+        proposals = input[0]
+        # [N]
+        gt_class_ids = inputs[1]
+        # [N, 4]
+        gt_boxes = inputs[2]
+        # 
+        gt_masks = inputs[3]
 
 
 ############################################################
@@ -277,6 +347,17 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 
 
 ############################################################
+#  Data Generator
+############################################################
+
+def data_generator(
+    dataset, config, shuffle=True, augment=False, augmentation=None,
+    random_rois=0, batch_size=1, detection_targets=False, no_augmentation_sources=None
+):
+    
+
+
+############################################################
 #  MaskRCNN Class
 ############################################################
 
@@ -302,17 +383,30 @@ class MaskRCNN():
             )
         
         # Inputs
-        input_image = KL.input(
-            shape=[None, None, config.IMAGE_SHAPE[2]],
-            name="input_image"
-        )
-        input_image_meta = KL.Input(
-            shape=[config.IMAGE_META_SIZE],
-            name="input_image_meta"
-        )
+        input_image = KL.input(shape=[None, None, config.IMAGE_SHAPE[2]], name="input_image")
+        input_image_meta = KL.Input(shape=[config.IMAGE_META_SIZE], name="input_image_meta")
+
         if mode == "training":
-            # 构建一些 train 模式独有的层，这里先不写
-            pass
+            # RPN GT
+            
+            # 
+            input_gt_class_ids = KL.Input(shape=[None], name="input_gt_class_ids", dtype=tf.int32)
+            # 
+            input_gt_boxes = KL.Input(shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
+            # 
+            gt_boxes = KL.Lambda(lambda x: norm_boxes_graph(x, K.shape(input_image)[1:3]))(input_gt_boxes)
+
+            # 
+            if config.USE_MINI_MASK:
+                input_gt_masks = KL.Input(
+                    shape=[config.MINI_MASK_SHAPE[0],
+                           config.MINI_MASK_SHAPE[1], None],
+                    name="input_gt_masks", dtype=bool)
+            else:
+                input_gt_masks = KL.Input(
+                    shape=[config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1], None],
+                    name="input_gt_masks", dtype=bool)
+
         elif mode == "inference":
             pass
 
@@ -411,6 +505,8 @@ class MaskRCNN():
         # 找推荐框时 non-maximum suppression之后保留多少 ROIs
         proposal_count = config.POST_NMS_ROIS_TRAINING if mode == "training"\
             else config.POST_NMS_ROIS_INFERENCE
+        # 获得初步的推荐框
+        # rpn_rois => [N, proposal_count, 4]
         rpn_rois = ProposalLayer(
             proposal_count=proposal_count,
             nms_threshold=config.RPN_NMS_THRESHOLD,
@@ -425,6 +521,18 @@ class MaskRCNN():
             if not config.USE_RPN_ROIS:
                 # 这个会有人用吗, 想卡死?
                 pass
+            else:
+                target_rois = rpn_rois
+
+        # 
+        rois, target_class_ids, target_bbox, target_mask = DetectionTargetLayer(
+            config, name="proposal_targets"
+        )([
+            target_rois, 
+            input_gt_class_ids, 
+            gt_boxes, 
+            input_gt_masks
+        ])
 
 
 
@@ -451,6 +559,27 @@ class MaskRCNN():
             "mask_rcnn_{}_*epoch*.h5".format(self.config.NAME.lower())
         )
         self.checkpoint_path = self.checkpoint_path.replace("*epoch*", "{epoch:04d}")
+
+    
+    def train(
+        self, train_dataset, val_dataset, learning_rate, epochs, layers, 
+        augmentation=None, custom_callbacks=None, no_augmentation_sources=None
+    ):
+        assert self.mode == "training", "Create model in training mode."
+
+        # Pre-defined layer regular expressions
+
+        # 
+        train_generator = data_generator(
+            train_dataset, self.config, shuffle=True,
+            augmentation=augmentation,
+            batch_size=self.config.BATCH_SIZE,
+            no_augmentation_sources=no_augmentation_sources
+        )
+        val_generator = data_generator(
+            val_dataset, self.config, shuffle=True,
+            batch_size=self.config.BATCH_SIZE
+        )
 
     
     # 作用是生成 5 个特征图的所有坐标归一化后的 anchors
@@ -500,3 +629,19 @@ def parse_image_meta_graph(meta):
         "scale": scale,
         "active_class_ids": active_class_ids,
     }
+
+
+
+############################################################
+#  Miscellenous Graph Functions
+############################################################
+
+# 作用是将 anchors 的坐标归一化, 虽然与 util 模块重复了
+# 但是这里的是用 tf 的方法, 所以输出的是 tensor, 它是在网络中的
+# boxes => anchors
+# shape => 原图大小 [1024, 1024]
+def norm_boxes_graph(boxes, shape):
+    h, w = tf.split(tf.cast(shape, tf.float32), axis=-1)
+    scale = tf.concat([h, w, h, w], axis=-1) - tf.constant(1.0)
+    shift = tf.constant([0., 0., 1., 1.])
+    return tf.divide(boxes - shift, scale)
