@@ -44,6 +44,30 @@ def extract_bboxes(mask):
     return boxes.astype(np.int32)
 
 
+def compute_iou(box, boxes, box_area, boxes_area):
+    # Calculate intersection areas
+    y1 = np.maximum(box[0], boxes[:, 0])
+    y2 = np.minimum(box[2], boxes[:, 2])
+    x1 = np.maximum(box[1], boxes[:, 1])
+    x2 = np.minimum(box[3], boxes[:, 3])
+    intersection = np.maximum(x2 - x1, 0) * np.maximum(y2 - y1, 0)
+    union = box_area + boxes_area[:] - intersection[:]
+    iou = intersection / union
+    return iou
+
+
+# 用于计算 boxes-iou 的，这个不多做解释
+def compute_overlaps(boxes1, boxes2):
+    area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
+    area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+
+    overlaps = np.zeros((boxes1.shape[0], boxes2.shape[0]))
+    for i in range(overlaps.shape[1]):
+        box2 = boxes2[i]
+        overlaps[:, i] = compute_iou(box2, boxes1, area2[i], area1)
+    return overlaps
+
+
 ############################################################
 #  Dataset
 ############################################################
@@ -269,7 +293,7 @@ def resize_mask(mask, scale, padding, crop=None):
         y, x, h, w = crop
         mask = mask[y:y + h, x:x + w]
     else:
-        # 
+        # 填充
         mask = np.pad(mask, padding, mode='constant', constant_values=0)
     return mask
 

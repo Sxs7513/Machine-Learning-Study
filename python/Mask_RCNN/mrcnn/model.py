@@ -396,6 +396,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None, u
 
     # 有些掩膜是空的, 排除它们
     _idx = np.sum(mask, axis=(0, 1)) > 0
+    # mask 的格式很特殊，看 coco.py 里面的 load_mask 便知道了
     mask = mask[:, :, _idx]
     class_ids = class_ids[_idx]
 
@@ -409,7 +410,53 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None, u
     source_class_ids = dataset.source_class_ids[dataset.image_info[image_id]["source"]]
     active_class_ids[source_class_ids] = 1
 
+    # 把图片的一些信息缓存下来，具体看该方法
+    image_meta = compose_image_meta(image_id, original_shape, image.shape, window, scale, active_class_ids)
 
+    return image, image_meta, class_ids, bbox, mask
+
+
+# 
+# image => 经过缩放后的图像，anchors => 该图像提取的所有 anchor
+# gt_class_ids => 图片中所有的 truth-boxes 类别
+# gt_boxes => 图片中所有的 truth-boxes 坐标
+def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
+    rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
+    rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
+
+    # coco中重叠框的问题，要剔除掉
+    crowd_ix = np.where(gt_class_ids < 0)[0]
+    if crowd_ix.shape[0] > 0:
+        non_crowd_ix = np.where(gt_class_ids > 0)[0]
+        crowd_boxes = gt_boxes[crowd_ix]
+        gt_class_ids = gt_class_ids[non_crowd_ix]
+        gt_boxes = gt_boxes[non_crowd_ix]
+        # 计算重叠boxes 和 anchors 的 iou
+        # [num_anchors, num_crowd_boxes]
+        crowd_overlaps = utils.compute_overlaps(anchors, crowd_boxes)
+        # 找到第二维度的最大值，即 anchors 与所有重叠框的最大 iou
+        crowd_iou_max = np.amax(crowd_overlaps, axis=1)
+        # 然后将重叠小于 0.001 的标记为 true，即代表正常的 anchors，后面会用到
+        no_crowd_bool = (crowd_iou_max < 0.001)
+    else:
+        # 如果没有重叠框，那么标记所有 truth-boxes 都是 true，后面会用到
+        no_crowd_bool = np.ones([anchors.shape[0]], dtype=bool)
+
+    # 计算 anchors 与所有 truth-boxes 的 iou
+    # [num_anchors, num_truth-boxes]
+    overlaps = utils.compute_overlaps(anchors, gt_boxes)
+
+    # 找到每个 anchor 与哪个 truth-boxes 的 iou 最大 
+    anchor_iou_argmax = np.argmax(overlaps, axis=1)
+    # [num_anchors, 1], 不多解释
+    anchor_iou_max = overlaps[np.arange(overlaps.shape[0]), anchor_iou_argmax]
+    # 对于最大 iou 小于 0.3 的 anchor，和与重叠框有较大重叠的 anchor，都标记为背景
+    rpn_match[(anchor_iou_max < 0.3) & (no_crowd_bool)] = -1
+    # 扎到每个 truth-box 与哪个 anchor 最接近。这里可能存在重复
+    # 比如第一个和第二个 truth-box 与 第三个 anchor 都最接近
+    # 这里计算比较难懂，可以自己随便弄个矩阵看看
+    gt_iou_argmax = np.argwhere(overlaps == np.max(overlaps, axis=0))[:, 0]
+    
 
 
 def data_generator(
@@ -452,12 +499,24 @@ def data_generator(
                     use_mini_mask=config.USE_MINI_MASK
                 )
             else:
+                # image 为缩放后的图片
+                # image_meta 为图片缩放的信息，与数据集所有的类别
+                # gt_class_ids 为图片中 truth-boxes 的类别
+                # gt_boxes 为图片中的 truth-boxes 坐标
+                # gt_masks 为掩膜
                 image, image_meta, gt_class_ids, gt_boxes, gt_masks = load_image_gt(
                     dataset, config, image_id, augment=augment,
                     augmentation=augmentation,
                     use_mini_mask=config.USE_MINI_MASK
                 )
+
+            if not np.any(gt_class_ids > 0):
+                continue
+
+            rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors, gt_class_ids, gt_boxes, config)
+
         except:
+            return
 
 
 ############################################################
@@ -714,9 +773,21 @@ class MaskRCNN():
 #  Data Formatting
 ############################################################
 
+# 将某个图片的现在的 id，原始的大小，进入训练时的大小(比如 1024 * 1024)
+# 窗口信息(看 utils 模块的 resize_image 方法)，scale 即图像缩放因子
+# active_class_ids 即图片隶属数据集中所有的 class，是一个数组，数量为 class 数量
+# 里面所有的数为 1
 def compose_image_meta(image_id, original_image_shape, image_shape, window, scale, active_class_ids):
+    meta = np.array(
+        [image_id],
+        list(original_image_shape),
+        list(image_shape),
+        list(window),
+        [scale],
+        list(active_class_ids)
+    )
     
-    return
+    return meta
 
 
 # 从 meta 中提取每一张图片的原始信息, 具体都啥意思回头来写

@@ -120,9 +120,10 @@ class CocoDataset(utils.Dataset):
 
                 instance_masks.append(m)
                 class_ids.append(class_id)
-
+        
         if class_ids:
-            # 将 masks 合并起来
+            # 将 masks 合并起来, 这里很奇怪，是第三个维度合并起来，instance_masks 原本是 [num_mask, height, width]
+            # 现在会变成 [height, width, num_mask]
             mask = np.stack(instance_masks, axis=2).astype(np.bool)
             class_ids = np.array(class_ids, dtype=np.int32)
             return mask, class_ids
