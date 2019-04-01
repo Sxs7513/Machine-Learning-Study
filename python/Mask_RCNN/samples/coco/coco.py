@@ -92,6 +92,62 @@ class CocoDataset(utils.Dataset):
             return coco
 
 
+    # 获取某张图片的掩膜信息，针对 coco 的
+    def load_mask(self, image_id):
+        image_info = self.image_info[image_id]
+        if image_info["source"] != "coco":
+            return super(CocoDataset, self).load_mask(image_id)
+
+        instance_masks = []
+        class_ids = []
+        annotations = self.image_info[image_id]["annotations"]
+
+        for annotation in annotations:
+            # 获得新赋予的类别 id
+            class_id = self.map_source_class_id("coco.{}".format(annotation['category_id']))
+            if class_id:
+                # 获得该物体的掩膜信息, 信息的格式请参考 https://wangyida.github.io/post/mask_rcnn/
+                # 总体来说, 每个掩摸都是一张图片哦, 只不过只有 0 1(实际是 bool)
+                m = self.annToMask(annotation, image_info["height"], image_info["width"])
+                if m.max() < 1:
+                    continue
+                if annotation["iscrowd"]:
+                    class_id *= -1
+
+                    # hack, 从这也能看出来 mask 的 shape, 哈哈. 与原图大小一致
+                    if m.shape[0] != image_info["height"] or m.shape[1] != image_info["width"]:
+                        m = np.ones([image_info["height"], image_info["width"]], dtype=bool)
+
+                instance_masks.append(m)
+                class_ids.append(class_id)
+
+        if class_ids:
+            # 将 masks 合并起来
+            mask = np.stack(instance_masks, axis=2).astype(np.bool)
+            class_ids = np.array(class_ids, dtype=np.int32)
+            return mask, class_ids
+        else:
+            # Call super class to return an empty mask
+            return super(CocoDataset, self).load_mask(image_id)
+
+
+    def annToMask(self, ann, height, width):
+        rle = self.annToRLE(ann, height, width)
+        m = maskUtils.decode(rle)
+        return m
+
+
+    def annToRLE(self, ann, height, width):
+        segm = ann['segmentation']
+        if isinstance(segm, list):
+            rles = maskUtils.frPyObjects(segm, height, width)
+            rle = maskUtils.merge(rles)
+        elif isinstance(segm['counts'], list):
+            rle = maskUtils.frPyObjects(segm, height, width)
+        else:
+            rle = ann['segmentation']
+        return rle
+
 
 if __name__ == '__main__':
     import argparse

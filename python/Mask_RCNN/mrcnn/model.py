@@ -350,11 +350,114 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  Data Generator
 ############################################################
 
+def load_image_gt(dataset, config, image_id, augment=False, augmentation=None, use_mini_mask=False):
+    # 加载图片
+    image = dataset.load_image(image_id)
+    # 获取图片中的掩膜位置信息，掩膜类别
+    mask, class_ids = dataset.load_mask(image_id)
+    original_shape = image.shape
+    # 缩放图像同时保持宽高比不变
+    # image 是 resize 后的图片
+    # window 如果给出了max_dim, 可能会对返回图像进行填充如果是这样的，则窗口是全图的部分图像坐标 (不包括填充的部分)
+    # scale 是图像缩放因子
+    # padding: 图像填充部分[(top, bottom), (left, right), (0, 0)]
+    image, window, scale, padding, crop = utils.resize_image(
+        image,
+        min_dim=config.IMAGE_MIN_DIM,
+        min_scale=config.IMAGE_MIN_SCALE,
+        max_dim=config.IMAGE_MAX_DIM,
+        mode=config.IMAGE_RESIZE_MODE
+    )
+    # 掩膜也是图片, 它也要 resize
+    mask = utils.resize_mask(mask, scale, padding, crop)
+
+    # 如果要图片增强, 那么进入下面逻辑
+    if augmentation:
+        import imgaug
+
+        MASK_AUGMENTERS = ["Sequential", "SomeOf", "OneOf", "Sometimes", "Fliplr", "Flipud", "CropAndPad", "Affine", "PiecewiseAffine"]
+
+        def hook(images, augmenter, parents, default):
+            return augmenter.__class__.__name__ in MASK_AUGMENTERS
+
+        image_shape = image.shape
+        mask_shape = mask.shape
+        # 固定变换序列,之后就可以先变换图像然后变换关键点,这样可以保证两次的变换完全相同
+        # 如果调用次函数,需要在每次 batch 的时候都调用一次,否则不同的 batch 执行相同的变换
+        det = augmentation.to_deterministic()
+        image = det.augment_image(image)
+        # Change mask to np.uint8 because imgaug doesn't support np.bool
+        mask = det.augment_image(mask.astype(np.uint8), hooks=imgaug.HooksImages(activator=hook))
+        # Verify that shapes didn't change
+        assert image.shape == image_shape, "Augmentation shouldn't change image size"
+        assert mask.shape == mask_shape, "Augmentation shouldn't change mask size"
+        # Change mask back to bool
+        mask = mask.astype(np.bool)
+
+    # 有些掩膜是空的, 排除它们
+    _idx = np.sum(mask, axis=(0, 1)) > 0
+    mask = mask[:, :, _idx]
+    class_ids = class_ids[_idx]
+
+    # 从掩膜数据中, 直接提取出来该图片的 truth-box 的位置大小
+    # [该图中 truth-box 的数量, (y1, x1, y2, x2)]
+    bbox = utils.extract_bboxes(mask)
+
+    # 该图片隶属数据集中所有的 class 标记为 1，不隶属本数据集合的 class 标记为0
+    # 这一步真的是没看懂...有什么必要吗???
+    active_class_ids = np.zeros([dataset.num_classes], dtype=np.int32)
+    source_class_ids = dataset.source_class_ids[dataset.image_info[image_id]["source"]]
+    active_class_ids[source_class_ids] = 1
+
+
+
+
 def data_generator(
     dataset, config, shuffle=True, augment=False, augmentation=None,
     random_rois=0, batch_size=1, detection_targets=False, no_augmentation_sources=None
 ):
-    
+    b = 0
+    image_index = -1
+    # 图片的id, 注意不是数据集原有的 id, 是重新定义的新的 id, 从 0 到 len(图片)
+    image_ids = np.copy(dataset.image_ids)
+    error_count = 0
+    no_augmentation_sources = no_augmentation_sources or []
+
+    # 经过 resnet 后提取的五个特征图的大小, 以 resnet-101 举例
+    # [[256, 256], [128, 128], [64, 64], [32, 32], [16, 16]]
+    backbone_shapes = compute_backbone_shapes(config, config.IMAGE_SHAPE)
+
+    # 生成五个特征图的所有 anchors，大小位置相对于原图
+    # 对于 1024 * 1024 的原图, a => [261888 , 4]
+    anchors = utils.generate_pyramid_anchors(
+        self.config.RPN_ANCHOR_SCALES,
+        self.config.RPN_ANCHOR_RATIOS,
+        backbone_shapes,
+        self.config.BACKBONE_STRIDES,
+        self.config.RPN_ANCHOR_STRIDE
+    )
+
+    while True:
+        try:
+            image_index = (image_index + 1) % len(image_ids)
+            if shuffle and image_index == 0:
+                np.random.shuffle(image_ids)
+            
+            image_id = image_ids[image_index]
+
+            if dataset.image_info[image_id]['source'] in no_augmentation_sources:
+                image, image_meta, gt_class_ids, gt_boxes, gt_masks = load_image_gt(
+                    dataset, config, image_id, augment=augment,
+                    augmentation=None,
+                    use_mini_mask=config.USE_MINI_MASK
+                )
+            else:
+                image, image_meta, gt_class_ids, gt_boxes, gt_masks = load_image_gt(
+                    dataset, config, image_id, augment=augment,
+                    augmentation=augmentation,
+                    use_mini_mask=config.USE_MINI_MASK
+                )
+        except:
 
 
 ############################################################
@@ -610,6 +713,11 @@ class MaskRCNN():
 ############################################################
 #  Data Formatting
 ############################################################
+
+def compose_image_meta(image_id, original_image_shape, image_shape, window, scale, active_class_ids):
+    
+    return
+
 
 # 从 meta 中提取每一张图片的原始信息, 具体都啥意思回头来写
 def parse_image_meta_graph(meta):

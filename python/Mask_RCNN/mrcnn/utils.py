@@ -16,6 +16,33 @@ import warnings
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
 
+############################################################
+#  Bounding Boxes
+############################################################
+
+# 从掩膜数据中, 直接提取出来 truth-box 的位置大小
+# mask => [height, width, 该图片中 num_mask]
+def extract_bboxes(mask):
+    boxes = np.zeros([mask.shape[-1], 4], dtype=np.int32)
+    for i in range(mask.shape[-1]):
+        m = mask[:, :, i]
+        # 这个是找出 box 的边界, 因为掩膜是以像素为单位的, 所以用 any 来找
+        # 只要水平方向的有任何一个点，该行就是 true, 然后用 where 来定位所有有
+        # 掩膜的行, 注意 [0] 不是为了取出上边界，而只是 where 会用 [] 套一层而已
+        horizontal_indicies = np.where(np.any(m, axis=0))[0]
+        # 垂直的同理
+        vertical_indicies = np.where(np.any(m, axis=1))[0]
+        if horizontal_indicies.shape[0]:
+            # 找到边界, [[0, -1]] 代表找到 0 -1 然后套一层 []
+            x1, x2 = horizontal_indicies[[0, -1]]
+            y1, y2 = vertical_indicies[[0, -1]]
+            x2 += 1
+            y2 += 1
+        else:
+            x1, x2, y1, y2 = 0, 0, 0, 0
+        boxes[i] = np.array([y1, x1, y2, x2])
+    return boxes.astype(np.int32)
+
 
 ############################################################
 #  Dataset
@@ -73,7 +100,7 @@ class Dataset(object):
         # 真实其实只有 80 个，这里给重新赋予 id
         self.class_ids = np.arange(self.num_classes)
         self.class_names = [clean_name(c["name"]) for c in self.class_info]
-        # image 也重新赋予 id
+        # image 也重新赋予 id, 不用 coco 原有的那个长长的
         self.num_images = len(self.image_info)
         self._image_ids = np.arange(self.num_images)
 
@@ -102,6 +129,149 @@ class Dataset(object):
                 if i == 0 or source == info['source']:
                     self.source_class_ids[source].append(i)
 
+
+    def map_source_class_id(self, source_class_id):
+        return self.class_from_source_map[source_class_id]
+
+    
+    @property
+    def image_ids(self):
+        return self._image_ids
+
+
+    # 加载图片
+    def load_image(self, image_id):
+        image = skimage.io.imread(self.image_info[image_id]["path"])
+        # 保证是原始图像是三维的
+        if image.ndim != 3:
+            image = skimage.color.gray2rgb(image)
+        # 保证原图图像通道数为 3
+        if image.shape[-1] == 4:
+            image = image[..., :3]
+        return image
+
+    
+    # 该方法需要被重写, 否则会返回空的
+    def load_mask(self, image_id):
+        logging.warning("You are using the default load_mask(), maybe you need to define your own one.")
+        mask = np.empty([0, 0, 0])
+        class_ids = np.empty([0], np.int32)
+        return mask, class_ids
+
+
+# 缩放图像同时保持宽高比不变，并且会返回 resize 的一些信息
+# min_dim: 如果给出了该值，缩放图像时要保持短边 == min_dim
+# max_dim: 如果给出了该值，缩放图像时要保持长边不超过它.
+# min_scale: 如果给出了该值，则使用它来缩放图像，而不管是否满足min_dim.
+# mode: 缩放模式.
+#     none:   无缩放或填充. 返回原图.
+#     square: 缩放或填充0，返回[max_dim, max_dim]大小的图像.
+#     pad64:  宽和高填充0，使他们成为64的倍数.
+#             如果IMAGE_MIN_DIM 或 IMAGE_MIN_SCALE不为None, 则在填充之前先
+#             缩放. IMAGE_MAX_DIM在该模式中被忽略.
+#             要求为64的倍数是因为在对FPN金字塔的6个levels进行上/下采样时保证平滑(2**6=64).
+#     crop:   对图像进行随机裁剪. 首先, 基于IMAGE_MIN_DIM和IMAGE_MIN_SCALE
+#             对图像进行缩放, 然后随机裁剪IMAGE_MIN_DIM x IMAGE_MIN_DIM大小. 
+#             仅在训练时使用.
+#             IMAGE_MAX_DIM在该模式中未使用.
+
+def resize_image(image, min_dim=None, max_dim=None, min_scale=None, mode="square"):
+    image_dtype = image.dtype
+    h, w = image.shape[:2]
+    window = (0, 0, h, w)
+    scale = 1
+    padding = [(0, 0), (0, 0), (0, 0)]
+    crop = None
+
+    if mode == "none":
+        return image, window, scale, padding, crop
+
+    # 下面这两段代码是设置
+    if min_dim:
+        # Scale up but not down
+        scale = max(1, min_dim / min(h, w))
+    if min_scale and scale < min_scale:
+        scale = min_scale
+
+    # Does it exceed max dim?
+    if max_dim and mode == "square":
+        image_max = max(h, w)
+        if round(image_max * scale) > max_dim:
+            scale = max_dim / image_max
+
+    # Resize image using bilinear interpolation
+    if scale != 1:
+        image = resize(image, (round(h * scale), round(w * scale)), preserve_range=True)
+
+    # 如果要求图片是正方形，那么采用填充的方式，而不是直接 resize
+    if mode == "square":
+        # Get new height and width
+        h, w = image.shape[:2]
+        top_pad = (max_dim - h) // 2
+        bottom_pad = max_dim - h - top_pad
+        left_pad = (max_dim - w) // 2
+        right_pad = max_dim - w - left_pad
+        padding = [(top_pad, bottom_pad), (left_pad, right_pad), (0, 0)]
+        image = np.pad(image, padding, mode='constant', constant_values=0)
+        # 代表的意思是在整个 (max_dim, max_dim) 的尺寸下，图像从什么位置开始真正存在，因为其他部分都是 0 填充
+        window = (top_pad, left_pad, h + top_pad, w + left_pad)
+    elif mode == "pad64":
+        h, w = image.shape[:2]
+        # Both sides must be divisible by 64
+        assert min_dim % 64 == 0, "Minimum dimension must be a multiple of 64"
+        # Height
+        if h % 64 > 0:
+            max_h = h - (h % 64) + 64
+            top_pad = (max_h - h) // 2
+            bottom_pad = max_h - h - top_pad
+        else:
+            top_pad = bottom_pad = 0
+        # Width
+        if w % 64 > 0:
+            max_w = w - (w % 64) + 64
+            left_pad = (max_w - w) // 2
+            right_pad = max_w - w - left_pad
+        else:
+            left_pad = right_pad = 0
+        padding = [(top_pad, bottom_pad), (left_pad, right_pad), (0, 0)]
+        image = np.pad(image, padding, mode='constant', constant_values=0)
+        window = (top_pad, left_pad, h + top_pad, w + left_pad)
+    # 剪切的情况
+    elif mode == "crop":
+        # Pick a random crop
+        h, w = image.shape[:2]
+        y = random.randint(0, (h - min_dim))
+        x = random.randint(0, (w - min_dim))
+        crop = (y, x, min_dim, min_dim)
+        image = image[y:y + min_dim, x:x + min_dim]
+        # 代表的意思是图像的大小，这里并不像 square 还能有位置信息
+        window = (0, 0, min_dim, min_dim)
+    else:
+        raise Exception("Mode {} not supported".format(mode))
+
+    # image: 缩放后的图像
+    # window: (y1, x1, y2, x2). 如果给出了max_dim, 可能会对返回图像进行填充
+    # 如果是这样的，则窗口是全图的部分图像坐标 (不包括填充的部分)
+    # scale: 图像缩放因子
+    # padding: 图像填充部分[(top, bottom), (left, right), (0, 0)]
+    return image.astype(image_dtype), window, scale, padding, crop
+
+
+# 因为掩膜也是一张图片, 所以在 resize 原图的时候, 也要顺带着处理下掩膜
+# 用指定的 scale 和 padding 缩放 mask。一般来说, 为了保持图像和 mask 的一致性，scale 和 padding 是通过 resize_image() 获取的
+# scale: mask缩放因子
+# padding: 填充[(top, bottom), (left, right), (0, 0)]
+def resize_mask(mask, scale, padding, crop=None):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        mask = scipy.ndimage.zoom(mask, zoom=[scale, scale, 1], order=0)
+    if crop is not None:
+        y, x, h, w = crop
+        mask = mask[y:y + h, x:x + w]
+    else:
+        # 
+        mask = np.pad(mask, padding, mode='constant', constant_values=0)
+    return mask
 
 
 ############################################################
@@ -137,7 +307,6 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     # 变为 [y1, x1, y2, x2]
     boxes = np.concatenate([box_centers - 0.5 * box_sizes, box_centers + 0.5 * box_sizes], axis=-1)
     return boxes
-
 
 
 # scales => 提取的 anchor 的边长 (32, 64, 128, 256, 512)
@@ -213,6 +382,30 @@ def batch_slice(inputs, graph_fn, batch_size, names=None):
         result = result[0]
 
     return result
+
+
+def resize(image, output_shape, order=1, mode='constant', cval=0, clip=True,
+           preserve_range=False, anti_aliasing=False, anti_aliasing_sigma=None):
+    """A wrapper for Scikit-Image resize().
+
+    Scikit-Image generates warnings on every call to resize() if it doesn't
+    receive the right parameters. The right parameters depend on the version
+    of skimage. This solves the problem by using different parameters per
+    version. And it provides a central place to control resizing defaults.
+    """
+    if LooseVersion(skimage.__version__) >= LooseVersion("0.14"):
+        # New in 0.14: anti_aliasing. Default it to False for backward
+        # compatibility with skimage 0.13.
+        return skimage.transform.resize(
+            image, output_shape,
+            order=order, mode=mode, cval=cval, clip=clip,
+            preserve_range=preserve_range, anti_aliasing=anti_aliasing,
+            anti_aliasing_sigma=anti_aliasing_sigma)
+    else:
+        return skimage.transform.resize(
+            image, output_shape,
+            order=order, mode=mode, cval=cval, clip=clip,
+            preserve_range=preserve_range)
 
 
 if __name__ == "__main__":
