@@ -285,6 +285,103 @@ class ProposalLayer(KE.Layer):
 #  Detection Target Layer
 ############################################################
 
+# 输出 tensor 的计算 iou 的方法
+def overlaps_graph(boxes1, boxes2):
+    b1 = tf.reshape(tf.tile(tf.expand_dims(boxes1, 1), [1, 1, tf.shape(boxes2)[0]]), [-1, 4])
+    b2 = tf.tile(boxes2, [tf.shape(boxes1)[0], 1])
+    # 2. Compute intersections
+    b1_y1, b1_x1, b1_y2, b1_x2 = tf.split(b1, 4, axis=1)
+    b2_y1, b2_x1, b2_y2, b2_x2 = tf.split(b2, 4, axis=1)
+    y1 = tf.maximum(b1_y1, b2_y1)
+    x1 = tf.maximum(b1_x1, b2_x1)
+    y2 = tf.minimum(b1_y2, b2_y2)
+    x2 = tf.minimum(b1_x2, b2_x2)
+    intersection = tf.maximum(x2 - x1, 0) * tf.maximum(y2 - y1, 0)
+    # 3. Compute unions
+    b1_area = (b1_y2 - b1_y1) * (b1_x2 - b1_x1)
+    b2_area = (b2_y2 - b2_y1) * (b2_x2 - b2_x1)
+    union = b1_area + b2_area - intersection
+    # 4. Compute IoU and reshape to [boxes1, boxes2]
+    iou = intersection / union
+    overlaps = tf.reshape(iou, [tf.shape(boxes1)[0], tf.shape(boxes2)[0]])
+    return overlaps
+
+
+# proposals => [proposal_count, 4]
+# gt_class_ids => [100]
+# gt_boxes => [100, 4]
+# gt_masks => [1024, 1024, 100]
+def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config):
+    asserts = [tf.Assert(tf.greater(tf.shape(proposals)[0], 0), [proposals], name="roi_assertion")]
+    
+    with tf.control_dependencies([asserts]):
+        proposals = tf.identity(proposals)
+
+    # 去掉坐标为 0 的 proposals
+    proposals, _ = trim_zeros_graph(proposals, name="trim_proposals")
+    # gt_boxes 同样, 这个是必须的, 因为 data_generator 的时候, 会填充很多空的
+    gt_boxes, non_zeros = trim_zeros_graph(gt_boxes, name="trim_gt_boxes")
+    # 同样
+    gt_class_ids = tf.boolean_mask(gt_class_ids, non_zeros, name="trim_gt_class_ids")
+    # 同样, 注意 tf.where 与 np.where 不一样, 具体看 http://www.studyai.com/article/3c11b2eb
+    gt_masks = tf.gather(gt_masks, tf.where(non_zeros)[:, 0], axis=2, name="trim_gt_masks")
+
+    # 把非重叠的 truth-box 筛选出来
+    crowd_ix = tf.where(gt_class_ids < 0)[:, 0]
+    non_crowd_ix = tf.where(gt_class_ids > 0)[:, 0]
+    crowd_boxes = tf.gather(gt_boxes, crowd_ix)
+    gt_class_ids = tf.gather(gt_class_ids, non_crowd_ix)
+    gt_boxes = tf.gather(gt_boxes, non_crowd_ix)
+    gt_masks = tf.gather(gt_masks, non_crowd_ix, axis=2)
+
+    # 计算每个推荐框与 truth-boxes 的 iou
+    # [num_proposals, num_gt_boxes]
+    overlaps = overlaps_graph(proposals, gt_boxes)
+
+    # 计算每个推荐框与重叠框的 iou, 标记小于 0.001 的为正常框
+    crowd_overlaps = overlaps_graph(proposals, crowd_boxes)
+    crowd_iou_max = tf.reduce_max(crowd_overlaps, axis=1)
+    no_crowd_bool = (crowd_iou_max < 0.001)
+
+    # 找到每个推荐框的最大重叠率
+    roi_iou_max = tf.reduce_max(overlaps, axis=1)
+    # 标记大于 0.5 的为正预测
+    positive_roi_bool = (roi_iou_max >= 0.5)
+    positive_indices = tf.where(positive_roi_bool)[:, 0]
+    # 标记小于 0.5 并且与重叠框不交集的为负预测
+    negative_indices = tf.where(tf.logical_and(roi_iou_max < 0.5, no_crowd_bool))[:, 0]
+
+    # 正预测的数量
+    positive_count = int(config.TRAIN_ROIS_PER_IMAGE * config.ROI_POSITIVE_RATIO)
+    # 正预测的序号
+    positive_indices = tf.random_shuffle(positive_indices)[:positive_count]
+    # 正样本真实的数量, 可能存在小于 200 * 0.33
+    positive_count = tf.shape(positive_indices)[0]
+
+    # 负预测的数量是正预测的 1.0 / config.ROI_POSITIVE_RATIO - 1 倍
+    r = 1.0 / config.ROI_POSITIVE_RATIO
+    negative_count = tf.cast(r * tf.cast(positive_count, tf.float32), tf.int32) - positive_count
+    negative_indices = tf.random_shuffle(negative_indices)[:negative_count]
+
+    # 取得需要得正负预测
+    positive_rois = tf.gather(proposals, positive_indices)
+    negative_rois = tf.gather(proposals, negative_indices)
+
+    positive_overlaps = tf.gather(overlaps, positive_indices)
+    # 找到正预测里每个和哪个 truth-box 最接近
+    roi_gt_box_assignment = tf.cond(
+        tf.greater(tf.shape(positive_overlaps)[1], 0),
+        true_fn = lambda: tf.argmax(positive_overlaps, axis=1),
+        false_fn = lambda: tf.cast(tf.constant([]), tf.int64)
+    )
+    # 同上
+    roi_gt_boxes = tf.gather(gt_boxes, roi_gt_box_assignment)
+    roi_gt_class_ids = tf.gather(gt_class_ids, roi_gt_box_assignment)
+
+    deltas = utils.box_refinement_graph(positive_rois, roi_gt_boxes)
+    deltas /= config.BBOX_STD_DEV
+
+
 # 
 class DetectionTargetLayer(KE.Layer):
     def __init__(self, config, **kwargs):
@@ -295,12 +392,23 @@ class DetectionTargetLayer(KE.Layer):
     def call(self, input):
         # [N, proposal_count, 4]
         proposals = input[0]
-        # [N]
+        # [N, 100]
         gt_class_ids = inputs[1]
-        # [N, 4]
+        # [N, 100, 4]
         gt_boxes = inputs[2]
-        # 
+        # [N, 1024, 1024, 100]
         gt_masks = inputs[3]
+
+        names = ["rois", "target_class_ids", "target_bbox", "target_mask"]
+        outputs = utils.batch_slice(
+            [proposals, gt_class_ids, gt_boxes, gt_masks],
+            lambda w, x, y, z: detection_targets_graph(w, x, y, z, self.config),
+            self.config.IMAGES_PER_GPU, names=names
+        )
+        return outputs
+
+    def compute_output_shape(self, input_shape):
+
 
 
 ############################################################
@@ -421,7 +529,9 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None, u
 # gt_class_ids => 图片中所有的 truth-boxes 类别
 # gt_boxes => 图片中所有的 truth-boxes 坐标
 def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
+    # 用于标记每个 anchor 是否是正负样本, [num_anchors, 1]
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
+    # 正样本 anchors 的 bbox 回归值, [256, 4]
     rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
 
     # coco中重叠框的问题，要剔除掉
@@ -456,7 +566,57 @@ def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
     # 比如第一个和第二个 truth-box 与 第三个 anchor 都最接近
     # 这里计算比较难懂，可以自己随便弄个矩阵看看
     gt_iou_argmax = np.argwhere(overlaps == np.max(overlaps, axis=0))[:, 0]
+    # 与 Faster-RCNN 一致, 这个不管重复率如何, 都要标记为正样本
+    rpn_match[gt_iou_argmax] = 1
+    # 再标记大于 0.7 的为正样本
+    rpn_match[anchor_iou_max >= 0.7] = 1
+    # 到此, rpn_match 已经生成完毕
+
+    # 定位到所有正样本位置
+    ids = np.where(rpn_match == 1)[0]
+    # 为了保证正样本数量不大于 256 的一半, 如果大于, 那么将 rpn_match 中多余的标记为啥都不是
+    extra = len(ids) - (config.RPN_TRAIN_ANCHORS_PER_IMAGE // 2)
+    if extra > 0:
+        ids = np.random.choice(ids, extra, replace=False)
+        rpn_match[ids] = 0
+
+    # 负样本一样
+    ids = np.where(rpn_match == -1)[0]
+    extra = len(ids) - (config.RPN_TRAIN_ANCHORS_PER_IMAGE - np.sum(rpn_match == 1))
+    if extra > 0:
+        # Rest the extra ones to neutral
+        ids = np.random.choice(ids, extra, replace=False)
+        rpn_match[ids] = 0
+
+    ids = np.where(rpn_match == 1)[0]
+    ix = 1
+    # 填充 rpn_bbox, 只会填正样本
+    for i, a in zip(ids, anchors[ids]):
+        # 找到每个正样本与哪个 truth-box 最接近
+        # [y1, x1, y2, x2]
+        gt = gt_boxes[anchor_iou_argmax[i]]
+
+        gt_h = gt[2] - gt[0]
+        gt_w = gt[3] - gt[1]
+        gt_center_y = gt[0] + 0.5 * gt_h
+        gt_center_x = gt[1] + 0.5 * gt_w
+
+        a_h = a[2] - a[0]
+        a_w = a[3] - a[1]
+        a_center_y = a[0] + 0.5 * a_h
+        a_center_x = a[1] + 0.5 * a_w
+
+        rpn_bbox[ix] = [
+            (gt_center_y - a_center_y) / a_h,
+            (gt_center_x - a_center_x) / a_w,
+            np.log(gt_h / a_h),
+            np.log(gt_w / a_w),
+        ]
+        # Normalize
+        rpn_bbox[ix] /= config.RPN_BBOX_STD_DEV
+        ix += 1
     
+    return rpn_match, rpn_bbox
 
 
 def data_generator(
@@ -486,6 +646,7 @@ def data_generator(
 
     while True:
         try:
+            # image_index 逐渐递增, 当到极限的时候, 又变回 0
             image_index = (image_index + 1) % len(image_ids)
             if shuffle and image_index == 0:
                 np.random.shuffle(image_ids)
@@ -499,11 +660,11 @@ def data_generator(
                     use_mini_mask=config.USE_MINI_MASK
                 )
             else:
-                # image 为缩放后的图片
-                # image_meta 为图片缩放的信息，与数据集所有的类别
-                # gt_class_ids 为图片中 truth-boxes 的类别
-                # gt_boxes 为图片中的 truth-boxes 坐标
-                # gt_masks 为掩膜
+                # image => 缩放后的图片 [1024, 1024, 3]
+                # image_meta => 图片缩放的信息，与数据集所有的类别, [1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
+                # gt_class_ids => 图片中 truth-boxes 的类别 [num_truth_boxes, 1]
+                # gt_boxes => 图片中的 truth-boxes 坐标 [num_truth_boxes, 4]
+                # gt_masks => 掩膜 [height, width, num_mask]
                 image, image_meta, gt_class_ids, gt_boxes, gt_masks = load_image_gt(
                     dataset, config, image_id, augment=augment,
                     augmentation=augmentation,
@@ -513,10 +674,79 @@ def data_generator(
             if not np.any(gt_class_ids > 0):
                 continue
 
+            # rpn_match => 用于标记每个 anchor 是否是正负样本, 其中正负样本数总和为 256, [num_anchors(261888), 1], 非正负样本的值均为 0
+            # rpn_bbox => 正样本 anchors 的 bbox 回归值, [256, 4]
             rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors, gt_class_ids, gt_boxes, config)
 
+            # 
+            if random_rois:
+                pass
+
+            # 初始化的时候, 生成 batch 矩阵, 不必多说
+            if b == 0:
+                # [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
+                batch_image_meta = np.zeros((batch_size,) + image_meta.shape, dtype=image_meta.dtype)
+                # [N, 261888, 1]
+                batch_rpn_match = np.zeros([batch_size, anchors.shape[0], 1], dtype=rpn_match.dtype)
+                # [N, 256, 4]
+                batch_rpn_bbox = np.zeros([batch_size, config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4], dtype=rpn_bbox.dtype)
+                # [N, height, width, 3]
+                batch_images = np.zeros((batch_size,) + image.shape, dtype=np.float32)
+                # [N, 100], 但是这个 100 是最大值, 基本填不满的
+                batch_gt_class_ids = np.zeros((batch_size, config.MAX_GT_INSTANCES), dtype=np.int32)
+                # [N, 100, 4] 与上面一样
+                batch_gt_boxes = np.zeros((batch_size, config.MAX_GT_INSTANCES, 4), dtype=np.int32)
+                # [N, height, width, 100] 同上
+                batch_gt_masks = np.zeros(
+                    (
+                        batch_size, gt_masks.shape[0], gt_masks.shape[1],
+                        config.MAX_GT_INSTANCES
+                    ), 
+                    dtype=gt_masks.dtype
+                )
+                if random_rois:
+                    pass
+            
+            if gt_boxes.shape[0] > config.MAX_GT_INSTANCES:
+                ids = np.random.choice(np.arange(gt_boxes.shape[0]), config.MAX_GT_INSTANCES, replace=False)
+                gt_class_ids = gt_class_ids[ids]
+                gt_boxes = gt_boxes[ids]
+                gt_masks = gt_masks[:, :, ids]
+
+            # Add to batch
+            batch_image_meta[b] = image_meta
+            batch_rpn_match[b] = rpn_match[:, np.newaxis]
+            batch_rpn_bbox[b] = rpn_bbox
+            batch_images[b] = mold_image(image.astype(np.float32), config)
+            batch_gt_class_ids[b, :gt_class_ids.shape[0]] = gt_class_ids
+            batch_gt_boxes[b, :gt_boxes.shape[0]] = gt_boxes
+            batch_gt_masks[b, :, :, :gt_masks.shape[-1]] = gt_masks
+            
+            if random_rois:
+                pass
+            b += 1
+
+            # 当填满一个 batch, 那么把上面生成的数据拼起来返回
+            if b >= batch_size:
+                inputs = [batch_images, batch_image_meta, batch_rpn_match, batch_rpn_bbox,
+                          batch_gt_class_ids, batch_gt_boxes, batch_gt_masks]
+                outputs = []
+
+                if random_rois:
+                    pass
+                yield inputs, outputs
+
+                # 很关键, 每填满一个batch必须要记得重置为0
+                b = 0
+        except (GeneratorExit, KeyboardInterrupt):
+            raise
         except:
-            return
+            # Log it and skip the image
+            logging.exception("Error processing image {}".format(
+                dataset.image_info[image_id]))
+            error_count += 1
+            if error_count > 5:
+                raise
 
 
 ############################################################
@@ -544,33 +774,39 @@ class MaskRCNN():
                 "For example, use 256, 320, 384, 448, 512, ... etc. "
             )
         
-        # Inputs
+        # 本次处理的图片 [N, height, width, 3]
         input_image = KL.input(shape=[None, None, config.IMAGE_SHAPE[2]], name="input_image")
+        # 图片缩放的信息，与数据集所有的类别 [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
         input_image_meta = KL.Input(shape=[config.IMAGE_META_SIZE], name="input_image_meta")
 
         if mode == "training":
-            # RPN GT
+            # 用于标记每个 anchor 是否是正负样本, 其中正负样本数总和为 256, [N, num_anchors(261888), 1], 非正负样本的值均为 0
+            input_rpn_match = KL.Input(shape=[None, 1], name="input_rpn_match", dtype=tf.int32)
+            # 正样本 anchors 的 bbox 回归值, [N, 256, 4]
+            input_rpn_bbox = KL.Input(shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
             
-            # 
+            # [N, 100] 但是这个 100 是最大值, 基本填不满的
             input_gt_class_ids = KL.Input(shape=[None], name="input_gt_class_ids", dtype=tf.int32)
-            # 
+            # [N, 100, 4] 但是这个 100 是最大值, 基本填不满的
             input_gt_boxes = KL.Input(shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
-            # 
+            # [N, 100, 4] 将 truth-boxes 归一化
             gt_boxes = KL.Lambda(lambda x: norm_boxes_graph(x, K.shape(input_image)[1:3]))(input_gt_boxes)
 
-            # 
             if config.USE_MINI_MASK:
                 input_gt_masks = KL.Input(
                     shape=[config.MINI_MASK_SHAPE[0],
                            config.MINI_MASK_SHAPE[1], None],
                     name="input_gt_masks", dtype=bool)
             else:
+                # [N, 1024, 1024, 100]
                 input_gt_masks = KL.Input(
                     shape=[config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1], None],
-                    name="input_gt_masks", dtype=bool)
+                    name="input_gt_masks", dtype=bool
+                )
 
         elif mode == "inference":
-            pass
+            # [N, 261888, 4]
+            input_anchors = KL.Input(shape=[None, 4], name="input_anchors")
 
         # 构建基础网络，这里默认使用 resnet101
         if callable(config.BACKBONE):
@@ -677,7 +913,7 @@ class MaskRCNN():
         )([rpn_class, rpn_bbox, anchors])
 
         if mode == 'training':
-            # 
+            # 从 data-generator 生成的 meta 里提取需要的信息
             active_class_ids = KL.Lambda(lambda x: parse_image_meta_graph(x)["active_class_ids"])(input_image_meta)
 
             if not config.USE_RPN_ROIS:
@@ -773,7 +1009,7 @@ class MaskRCNN():
 #  Data Formatting
 ############################################################
 
-# 将某个图片的现在的 id，原始的大小，进入训练时的大小(比如 1024 * 1024)
+# 将某个图片的现在的 id，原始的大小[height, width, 3]，进入训练时的大小(比如 1024 * 1024)
 # 窗口信息(看 utils 模块的 resize_image 方法)，scale 即图像缩放因子
 # active_class_ids 即图片隶属数据集中所有的 class，是一个数组，数量为 class 数量
 # 里面所有的数为 1
@@ -790,7 +1026,7 @@ def compose_image_meta(image_id, original_image_shape, image_shape, window, scal
     return meta
 
 
-# 从 meta 中提取每一张图片的原始信息, 具体都啥意思回头来写
+# 从 data-generator 生成的 meta 里提取需要的信息
 def parse_image_meta_graph(meta):
     image_id = meta[:, 0]
     original_image_shape = meta[:, 1:4]
@@ -810,14 +1046,26 @@ def parse_image_meta_graph(meta):
     }
 
 
+# 图片像素减去了个平均值
+def mold_image(images, config):
+    return images.astype(np.float32) - config.MEAN_PIXEL
+
 
 ############################################################
 #  Miscellenous Graph Functions
 ############################################################
 
-# 作用是将 anchors 的坐标归一化, 虽然与 util 模块重复了
+# 作用是选出 boxes 中非零的 box, 并顺便也返回非零 box 的序号
+# boxes => [num, 4]
+def trim_zeros_graph(boxes, name='trim_zeros'):
+    non_zeros = tf.cast(tf.reduce_sum(tf.abs(boxes), axis=1), tf.bool)
+    boxes = tf.boolean_mask(boxes, non_zeros, name=name)
+    return boxes, non_zeros
+
+
+# 作用是将 box 的坐标归一化, 虽然与 util 模块重复了
 # 但是这里的是用 tf 的方法, 所以输出的是 tensor, 它是在网络中的
-# boxes => anchors
+# boxes => [N, num, 4]
 # shape => 原图大小 [1024, 1024]
 def norm_boxes_graph(boxes, shape):
     h, w = tf.split(tf.cast(shape, tf.float32), axis=-1)

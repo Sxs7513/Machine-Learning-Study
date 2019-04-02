@@ -146,7 +146,7 @@ class Config(object):
     # To change this you also need to change the neural network mask branch
     MASK_SHAPE = [28, 28]
 
-    # Maximum number of ground truth instances to use in one image
+    # 一张图片中最多能有多少个 truth-boxes
     MAX_GT_INSTANCES = 100
 
     # RPN 和最终检测的 Bounding box refinement 的标准差

@@ -1,6 +1,6 @@
 {
     "python.linting.pylintEnabled": false,
-    "python.pythonPath": "E:\\anaconda\\envs\\python366\\python.exe",
+    "python.pythonPath": "D:\\Users\\xssong\\AppData\\Local\\Continuum\\anaconda3\\envs\\py3\\python.exe",
     "terminal.integrated.shellArgs.windows": [
         "/k",
         "D:\\Users\\xssong\\AppData\\Local\\Continuum\\anaconda3\\Scripts\\activate.bat D:\\Users\\xssong\\AppData\\Local\\Continuum\\anaconda3"
