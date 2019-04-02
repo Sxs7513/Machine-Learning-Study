@@ -325,6 +325,22 @@ def resize_mask(mask, scale, padding, crop=None):
     return mask
 
 
+# 用于把 mask 缩小，来节省内存，之后可以用 expand_masks 来复原
+def minimize_mask(bbox, mask, mini_shape):
+    # mask 的数量 shape 在最后一个维度
+    mini_mask = np.zeors(mini_shape + (mask.shape[-1], ), dtype=bool)
+    for i in range(mini_mask.shape[-1]):
+        m = mask[:, :, i].astype(bool)
+        y1, x1, y2, x2 = bbox[i][:4]
+        # 只取出来需要的部分
+        m = m[y1:y2, x1:x2]
+        if m.size == 0:
+            raise Exception("Invalid bounding box with area of zero")
+        m = resize(m, mini_shape)
+        mini_mask[:, :, i] = np.around(m).astype(np.bool)
+    return mini_mask
+
+
 ############################################################
 #  Anchors
 ############################################################

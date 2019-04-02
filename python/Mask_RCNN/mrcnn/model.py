@@ -310,7 +310,7 @@ def overlaps_graph(boxes1, boxes2):
 # proposals => [proposal_count, 4]
 # gt_class_ids => [100]
 # gt_boxes => [100, 4]
-# gt_masks => [1024, 1024, 100]
+# gt_masks => [1024(28), 1024(28), 100]
 def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     asserts = [tf.Assert(tf.greater(tf.shape(proposals)[0], 0), [proposals], name="roi_assertion")]
     
@@ -378,8 +378,62 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     roi_gt_boxes = tf.gather(gt_boxes, roi_gt_box_assignment)
     roi_gt_class_ids = tf.gather(gt_class_ids, roi_gt_box_assignment)
 
+    # [num, 4]
     deltas = utils.box_refinement_graph(positive_rois, roi_gt_boxes)
     deltas /= config.BBOX_STD_DEV
+
+    # 主要是用来在下面的crop_and_resize，需要伪造一个通道 [num, height, width, 1]
+    transposed_masks = tf.expand_dims(tf.transpose(gt_masks, [2, 0, 1]), -1)
+    # 取出来对应的 masks
+    roi_masks = tf.gather(transposed_masks, roi_gt_box_assignment)
+
+    boxes = positive_rois
+    if config.USE_MINI_MASK:
+        y1, x1, y2, x2 = tf.split(positive_rois, 4, axis=1)
+        gt_y1, gt_x1, gt_y2, gt_x2 = tf.split(roi_gt_boxes, 4, axis=1)
+        gt_h = gt_y2 - gt_y1
+        gt_w = gt_x2 - gt_x1
+        y1 = (y1 - gt_y1) / gt_h
+        x1 = (x1 - gt_x1) / gt_w
+        y2 = (y2 - gt_y1) / gt_h
+        x2 = (x2 - gt_x1) / gt_w
+        boxes = tf.concat([y1, x1, y2, x2], 1)
+    # 给这些正预测做一个新的编号
+    box_ids = tf.range(0, tf.shape(roi_masks)[0])
+    # 这一步针对没有开启 USE_MINI_MASK 的是有用的
+    # 但是 USE_MINI_MASK 是默认开启的，所以 mask 当前已经
+    # 是最精简模式
+    masks = tf.image.crop_and_resize(
+        tf.cast(roi_masks, tf.float32), 
+        boxes,
+        box_ids,
+        config.MASK_SHAPE
+    )
+
+    # 把上面的那个 expand_dims 的去掉，已经没有利用价值啦
+    masks = tf.squeeze(masks, axis=3)
+    # 四舍五入，这个把英文原文粘一下
+    # Threshold mask pixels at 0.5 to have GT masks be 0 or 1 to use with
+    # binary cross entropy loss.
+    masks = tf.round(masks)
+
+    # [200(可能小于这个数), 4]
+    rois = tf.concat([positive_rois, negative_rois], axis=0)
+    N = tf.shape(negative_rois)[0]
+    P = tf.maximum(config.TRAIN_ROIS_PER_IMAGE - tf.shape(rois)[0], 0)
+    # 不足的用 0 来补, [200, 4]
+    rois = tf.pad(rois, [(0, P), (0, 0)])
+    # [200, 4]
+    roi_gt_boxes = tf.pad(roi_gt_boxes, [(0, N + P), (0, 0)])
+    # [200, 1]
+    roi_gt_class_ids = tf.pad(roi_gt_class_ids, [(0, N + P)])
+    # [200, 4]
+    deltas = tf.pad(deltas, [(0, N + P), (0, 0)])
+    # [200, height, width]
+    masks = tf.pad(masks, [[0, N + P], (0, 0), (0, 0)])
+
+    return rois, roi_gt_class_ids, deltas, masks
+
 
 
 # 
@@ -396,7 +450,7 @@ class DetectionTargetLayer(KE.Layer):
         gt_class_ids = inputs[1]
         # [N, 100, 4]
         gt_boxes = inputs[2]
-        # [N, 1024, 1024, 100]
+        # [N, 1024(28), 1024(28), 100]
         gt_masks = inputs[3]
 
         names = ["rois", "target_class_ids", "target_bbox", "target_mask"]
@@ -517,6 +571,10 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None, u
     active_class_ids = np.zeros([dataset.num_classes], dtype=np.int32)
     source_class_ids = dataset.source_class_ids[dataset.image_info[image_id]["source"]]
     active_class_ids[source_class_ids] = 1
+
+    # 有需要的话，把 mask 缩小，来节省内存，之后可以复原的
+    if use_mini_mask:
+        mask = utils.minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
 
     # 把图片的一些信息缓存下来，具体看该方法
     image_meta = compose_image_meta(image_id, original_shape, image.shape, window, scale, active_class_ids)
@@ -791,8 +849,10 @@ class MaskRCNN():
             input_gt_boxes = KL.Input(shape=[None, 4], name="input_gt_boxes", dtype=tf.float32)
             # [N, 100, 4] 将 truth-boxes 归一化
             gt_boxes = KL.Lambda(lambda x: norm_boxes_graph(x, K.shape(input_image)[1:3]))(input_gt_boxes)
-
+            
+            # 针对是否开启缩小 mask
             if config.USE_MINI_MASK:
+                # [N, 28, 28, 100]
                 input_gt_masks = KL.Input(
                     shape=[config.MINI_MASK_SHAPE[0],
                            config.MINI_MASK_SHAPE[1], None],
