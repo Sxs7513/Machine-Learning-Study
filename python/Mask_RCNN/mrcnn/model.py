@@ -279,6 +279,44 @@ class ProposalLayer(KE.Layer):
         return (None, self.proposal_count, 4)
 
 
+############################################################
+#  ROIAlign Layer
+############################################################
+
+def log2_graph(x):
+    return tf.log(x) / tf.log(2.0)
+
+
+class PyramidROIAlign(KE.Layer):
+    def __init__(self, pool_shape, **kwargs):
+        super(PyramidROIAlign, self).__init__(**kwargs)
+        self.pool_shape = tuple(pool_shape)
+
+    
+    # inputs => [[N, 200, 4], [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES], [N, 256，256，256], [N, 128，128，256], [N, 64，64，256], [N, 32，32，256]]
+    def call(self, inputs):
+        boxes = inputs[0]
+        image_meta = inputs[1]
+        feature_maps = inputs[2:]
+
+        y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
+        # [N, 200, 1]
+        h = y2 - y1
+        w = x2 - x1
+
+        # [1024, 1024]
+        image_shape = parse_image_meta_graph(image_meta)['image_shape'][0]
+        # [N]
+        image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
+        # 用于根据 ROI 大小来分配不同的 feature_map
+        # https://blog.csdn.net/pangsmao/article/details/81952495
+        # 首先看和 224 比它是大还是小, [N, 200, 1]
+        roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
+        # 然后
+        roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
+        # 去掉第三维度 [N, 200]
+        roi_level = tf.squeeze(roi_level, 2)
+
 
 
 ############################################################
@@ -435,7 +473,6 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     return rois, roi_gt_class_ids, deltas, masks
 
 
-
 # 
 class DetectionTargetLayer(KE.Layer):
     def __init__(self, config, **kwargs):
@@ -459,11 +496,21 @@ class DetectionTargetLayer(KE.Layer):
             lambda w, x, y, z: detection_targets_graph(w, x, y, z, self.config),
             self.config.IMAGES_PER_GPU, names=names
         )
+        # outputs => [[N, 200, 4], [N, 200], [N, 200, 4], [N, 200, height, width]]
         return outputs
 
+
     def compute_output_shape(self, input_shape):
+        return [
+            (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),
+            (None, self.config.TRAIN_ROIS_PER_IMAGE),
+            (None, self.config.TRAIN_ROIS_PER_IMAGE, 4),
+            (None, self.config.TRAIN_ROIS_PER_IMAGE, self.config.MASK_SHAPE[0], self.config.MASK_SHAPE[1])
+        ]
 
 
+    def compute_mask(self, inputs, mask=None):
+        return [None, None, None, None]
 
 ############################################################
 #  Region Proposal Network (RPN)
@@ -506,6 +553,19 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
     outputs = rpn_graph(input_feature_map, anchors_per_location, anchor_stride)
     return KM.Model([input_feature_map], outputs, name="rpn_model")
 
+
+############################################################
+#  Feature Pyramid Network Heads
+############################################################
+
+# 
+# rois => [N, 200, 4]
+# feature_maps => [[N, 256，256，256], [N, 128，128，256], [N, 64，64，256], [N, 32，32，256]]
+# image_meta => [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
+# pool_size => [7, 7]
+# num_classes => 81
+def fpn_classifier_graph(rois, feature_maps, image_meta, pool_size, num_classes, train_bn=True, fc_layers_size=1024):
+    x = PyramidROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + feature_maps)
 
 
 ############################################################
@@ -982,7 +1042,13 @@ class MaskRCNN():
             else:
                 target_rois = rpn_rois
 
-        # 
+        # 用于提供 rois 即进入 FPN 网络的训练数据, 包括预测的正负样本
+        # 预测的正样本与最接近的 truth-box 的边框回归值 (可能会奇怪为社么是200个
+        # 因为补 0 了, 负样本对应的全是 0). 还有正样本对应的类别以及正样本对应的 mask
+        # rois => [N, 200, 4]
+        # target_class_ids => [N, 200]
+        # target_bbox => [N, 200, 4]
+        # target_mask => [N, 200, 28, 28]
         rois, target_class_ids, target_bbox, target_mask = DetectionTargetLayer(
             config, name="proposal_targets"
         )([
@@ -991,6 +1057,14 @@ class MaskRCNN():
             gt_boxes, 
             input_gt_masks
         ])
+
+        # 
+        mrcnn_class_logits, mrcnn_class, mrcnn_bbox = fpn_classifier_graph(
+            rois, mrcnn_feature_maps, input_image_meta,
+            config.POOL_SIZE, config.NUM_CLASSES,
+            train_bn=config.TRAIN_BN,
+            fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE
+        ) 
 
 
 
