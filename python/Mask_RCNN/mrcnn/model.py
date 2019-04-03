@@ -310,9 +310,13 @@ class PyramidROIAlign(KE.Layer):
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
         # 用于根据 ROI 大小来分配不同的 feature_map
         # https://blog.csdn.net/pangsmao/article/details/81952495
-        # 首先看和 224 比它是大还是小, [N, 200, 1]
+        # 首先看和 224 比它是大还是小, 注意 h w 已经归一化，所以会像下面这样除
+        # 引入 log 是为了引入负数，方面下面直接加上 k0 即基数
+        # [N, 200, 1]
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-        # 然后
+        # 然后首先确保值在 2-5 之间(inputs从 2-5 为 feature_map)
+        # 计算应该输入哪个 feature_map, 如果莫个 roi 大小是 224 * 224
+        # 那么它应该被归给 64 * 64 这个
         roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
         # 去掉第三维度 [N, 200]
         roi_level = tf.squeeze(roi_level, 2)
