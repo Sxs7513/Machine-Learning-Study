@@ -287,6 +287,9 @@ def log2_graph(x):
     return tf.log(x) / tf.log(2.0)
 
 
+# 自定义层，RoIAlign, 它的优势网上有很多文章
+# http://blog.lkj666.top/2018/09/20/Mask%20R-CNN%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/
+# https://zhuanlan.zhihu.com/p/37998710
 class PyramidROIAlign(KE.Layer):
     def __init__(self, pool_shape, **kwargs):
         super(PyramidROIAlign, self).__init__(**kwargs)
@@ -312,11 +315,71 @@ class PyramidROIAlign(KE.Layer):
         # https://blog.csdn.net/pangsmao/article/details/81952495
         # 首先看和 224 比它是大还是小, [N, 200, 1]
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
-        # 然后
+        # 然后以 64 * 64 为基准，来进行调整
         roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
         # 去掉第三维度 [N, 200]
         roi_level = tf.squeeze(roi_level, 2)
 
+        pooled = []
+        box_to_level = []
+        # 遍历每个 feature_map
+        for i, level in enumerate(range(2, 6)):
+            # 找到每个 feature_map 都与哪些 roi 匹配的坐标
+            # tf.where 返回值格式 [坐标1(第几个N, 第几个box), 坐标2,……]
+            # np.where 返回值格式 [[坐标1.x, 坐标2.x……], [坐标1.y, 坐标2.y……]]
+            # [N, 2]
+            ix = tf.where(tf.equal(roi_level, level))
+            # 获取到这些 rois, 注意带有 batch 维度
+            # [N, featurex_boxes_num, 4]
+            level_boxes = tf.gather(boxes, ix)
+
+            box_indices = tf.cast(ix[:, 0], tf.int32)
+            # 将对应 rois 的位置坐标缓存起来，ix 是个数组
+            box_to_level.append(ix)
+
+            # level_boxes 和 box_indices 本身属于 RPN 计算出来结果
+            # 但是两者作用于 feature 后的输出 Tensor 却是 RCNN 部分的输入
+            # 但是两部分的梯度不能相互流通的，所以需要 tf.stop_gradient() 截断梯度传播
+            level_boxes = tf.stop_gradient(level_boxes)
+            box_indices = tf.stop_gradient(box_indices)
+
+            # 这里并没有采用论文中提到的 4 个采样点的方法，而是采用了论文中提到的也非常有效的 1 个点采样的方法
+            # 由于 crop_and_resize 默认使用双线性插值，即将格子中心的插值结果做为输出，而不是取四个点再做池化
+            # 即首先剪切出来 roi，然后使用双线性差值到固定大小比如 7 * 7。原来在 4 个采样点的时候，先双线性差值
+            # 出来四个点，然后 max-pool 来获得该区域的最大值，在一个采样点的时候，就等于先在区域中心双线性差值
+            # 然后直接取该点即可！
+            # http://blog.lkj666.top/2018/09/20/Mask%20R-CNN%E5%AD%A6%E4%B9%A0%E7%AC%94%E8%AE%B0/
+            # 关于双线性差值法，可以看下面的链接
+            # https://blog.csdn.net/u013883974/article/details/76812735
+            # https://blog.csdn.net/u012193416/article/details/86525411
+            # [N, featurex_boxes, num, 7, 7, 256]
+            pooled.append(
+                tf.image.crop_and_resize(feature_maps[i], level_boxes, box_indices, self.pool_shape, method="bilinear")
+            )
+        # 遍历完毕后，pooled => [[N, feature1_boxes_num, 7, 7, 256], [N, feature2_boxes_num, 7, 7, 256], ...]
+        # box_to_level => 
+
+        # 将所有结果合并起来，没有 batch 区分
+        # [N * 200, 7, 7, 256]
+        pooled = tf.concat(pooled, axis=0)
+        # 同上, [N * 200, 1]
+        box_to_level = tf.concat(box_to_level, axis=0)
+        # [N * 200, 1]
+        box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
+        # [N * 200, 2]
+        box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)
+
+        # 挺好玩的，为了再把 batch 分出来以及不择手段了
+        sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
+        ix = tf.nn.top_k(sorting_tensor, k=tf.shape(box_to_level)[0]).indices[::-1]
+        ix = tf.gather(box_to_level[:, 2], ix)
+        pooled = tf.gather(pooled, ix)
+
+        # 值为 [N, 200, 7, 7, 256]
+        shape = tf.concat([tf.shape(boxes)[:2], tf.shape(pooled)[1:]], axis=0)
+        # [N, 200, 7, 7, 256]
+        pooled = tf.reshape(pooled, shape)
+        return pooled
 
 
 ############################################################
@@ -565,6 +628,8 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 # pool_size => [7, 7]
 # num_classes => 81
 def fpn_classifier_graph(rois, feature_maps, image_meta, pool_size, num_classes, train_bn=True, fc_layers_size=1024):
+    # ROIAlign 层，将所有 rois 统一为 7 * 7 大小
+    # x => [N, 200, 7, 7, 256]
     x = PyramidROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + feature_maps)
 
 
