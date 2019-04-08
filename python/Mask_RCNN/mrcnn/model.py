@@ -283,6 +283,7 @@ class ProposalLayer(KE.Layer):
 #  ROIAlign Layer
 ############################################################
 
+# log2, 即 x = 2 的时候输出为 1
 def log2_graph(x):
     return tf.log(x) / tf.log(2.0)
 
@@ -303,7 +304,7 @@ class PyramidROIAlign(KE.Layer):
         feature_maps = inputs[2:]
 
         y1, x1, y2, x2 = tf.split(boxes, 4, axis=2)
-        # [N, 200, 1]
+        # [N, 200, 1]，因为 tf.split 不会降维
         h = y2 - y1
         w = x2 - x1
 
@@ -318,7 +319,7 @@ class PyramidROIAlign(KE.Layer):
         # [N, 200, 1]
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
         # 然后首先确保值在 2-5 之间(inputs从 2-5 为 feature_map)
-        # 计算应该输入哪个 feature_map, 如果莫个 roi 大小是 224 * 224
+        # 计算应该输入哪个 feature_map, 如果莫个 roi 大小是 112 * 112s
         # 那么它应该被归给 64 * 64 这个
         roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
         # 去掉第三维度 [N, 200]
@@ -331,7 +332,7 @@ class PyramidROIAlign(KE.Layer):
             # 找到每个 feature_map 都与哪些 roi 匹配的坐标
             # tf.where 返回值格式 [坐标1(第几个N, 第几个box), 坐标2,……]
             # np.where 返回值格式 [[坐标1.x, 坐标2.x……], [坐标1.y, 坐标2.y……]]
-            # [N, 2]
+            # [N, num, 2]
             ix = tf.where(tf.equal(roi_level, level))
             # 获取到这些 rois, 注意带有 batch 维度
             # [N, featurex_boxes_num, 4]
