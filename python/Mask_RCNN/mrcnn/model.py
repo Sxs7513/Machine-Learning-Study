@@ -312,14 +312,15 @@ class PyramidROIAlign(KE.Layer):
         image_shape = parse_image_meta_graph(image_meta)['image_shape'][0]
         # [N]
         image_area = tf.cast(image_shape[0] * image_shape[1], tf.float32)
-        # 用于根据 ROI 大小来分配不同的 feature_map
+        # 用于根据 ROI 大小来分配不同的 feature_map, 因为在提取 anchor 的时候
+        # 大的 feature_map 提取的 anchor 都小, 反之...
         # https://blog.csdn.net/pangsmao/article/details/81952495
         # 首先看和 224 比它是大还是小, 注意 h w 已经归一化，所以会像下面这样除
         # 引入 log 是为了引入负数，方面下面直接加上 k0 即基数
         # [N, 200, 1]
         roi_level = log2_graph(tf.sqrt(h * w) / (224.0 / tf.sqrt(image_area)))
         # 然后首先确保值在 2-5 之间(inputs从 2-5 为 feature_map)
-        # 计算应该输入哪个 feature_map, 如果莫个 roi 大小是 112 * 112s
+        # 计算应该输入哪个 feature_map, 如果莫个 roi 大小是 112 * 112
         # 那么它应该被归给 64 * 64 这个
         roi_level = tf.minimum(5, tf.maximum(2, 4 + tf.cast(tf.round(roi_level), tf.int32)))
         # 去掉第三维度 [N, 200]
@@ -332,7 +333,7 @@ class PyramidROIAlign(KE.Layer):
             # 找到每个 feature_map 都与哪些 roi 匹配的坐标
             # tf.where 返回值格式 [坐标1(第几个N, 第几个box), 坐标2,……]
             # np.where 返回值格式 [[坐标1.x, 坐标2.x……], [坐标1.y, 坐标2.y……]]
-            # [N, num, 2]
+            # [num, 2]
             ix = tf.where(tf.equal(roi_level, level))
             # 获取到这些 rois, 注意带有 batch 维度
             # [N, featurex_boxes_num, 4]
@@ -357,27 +358,29 @@ class PyramidROIAlign(KE.Layer):
             # 关于双线性差值法，可以看下面的链接
             # https://blog.csdn.net/u013883974/article/details/76812735
             # https://blog.csdn.net/u012193416/article/details/86525411
-            # [N, featurex_boxes, num, 7, 7, 256]
+            # [featurex_boxes_num * N, 7, 7, 256]
             pooled.append(
                 tf.image.crop_and_resize(feature_maps[i], level_boxes, box_indices, self.pool_shape, method="bilinear")
             )
-        # 遍历完毕后，pooled => [[N, feature1_boxes_num, 7, 7, 256], [N, feature2_boxes_num, 7, 7, 256], ...]
-        # box_to_level => 
+        # 遍历完毕后，pooled => [[feature1_boxes_num * N, 7, 7, 256], [N, feature2_boxes_num * N, 7, 7, 256], ...]
+        # box_to_level => [[num1, 2], [num2, 2], [num3, 2], [num4, 2]]
 
         # 将所有结果合并起来，没有 batch 区分
         # [N * 200, 7, 7, 256]
         pooled = tf.concat(pooled, axis=0)
-        # 同上, [N * 200, 1]
+        # 同上, [N * 200, 2]
         box_to_level = tf.concat(box_to_level, axis=0)
         # [N * 200, 1]
         box_range = tf.expand_dims(tf.range(tf.shape(box_to_level)[0]), 1)
-        # [N * 200, 2]
+        # [N * 200, 3]
         box_to_level = tf.concat([tf.cast(box_to_level, tf.int32), box_range], axis=1)
 
-        # 挺好玩的，为了再把 batch 分出来以及不择手段了
+        # 挺好玩的，为了再把 batch 分出来以及不择手段了，top_k 具有 sort 的功能
+        # 通过取它的 indices 结合下面的 reshape 即可重新分出来 batch
         sorting_tensor = box_to_level[:, 0] * 100000 + box_to_level[:, 1]
         ix = tf.nn.top_k(sorting_tensor, k=tf.shape(box_to_level)[0]).indices[::-1]
         ix = tf.gather(box_to_level[:, 2], ix)
+        # [N * 200, 7, 7, 256]
         pooled = tf.gather(pooled, ix)
 
         # 值为 [N, 200, 7, 7, 256]
@@ -626,7 +629,7 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 #  Feature Pyramid Network Heads
 ############################################################
 
-# 
+# 用于输出 rois 创建分类与边框回归的预测值
 # rois => [N, 200, 4]
 # feature_maps => [[N, 256，256，256], [N, 128，128，256], [N, 64，64，256], [N, 32，32，256]]
 # image_meta => [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
@@ -636,6 +639,46 @@ def fpn_classifier_graph(rois, feature_maps, image_meta, pool_size, num_classes,
     # ROIAlign 层，将所有 rois 统一为 7 * 7 大小
     # x => [N, 200, 7, 7, 256]
     x = PyramidROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + feature_maps)
+    # [N, 200, 1, 1, 1024]
+    x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"), name="mrcnn_class_conv1")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
+    x = kL.Activation("relu")(x)
+    # [N, 200, 1, 1, 1024]
+    x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (1, 1)), name="mrcnn_class_conv2")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn2')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    # 起到打平的效果 [N, 200, 1024] 
+    shared = KL.Lambda(lambda x: K.squeeze(K.squeeze(x, 3), 2), name="pool_squeeze")(x)
+
+    # 用于分类 [N, 200, num_classes]
+    mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes), name='mrcnn_class_logits')(shared)
+    mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"), name="mrcnn_class")(mrcnn_class_logits)
+
+    # 用于边框回归
+    # [N, 200, num_classes * 4]
+    x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'), name='mrcnn_bbox_fc')(shared)
+    s = K.int_shape(x)
+    # [N, 200, num_classes, 4], 注意 Reshape 不包含 N 维
+    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
+
+    return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
+
+
+# 用于输出 rois 的 mask 的预测值
+# rois => [N, 200, 4]
+# feature_maps => [[N, 256，256，256], [N, 128，128，256], [N, 64，64，256], [N, 32，32，256]]
+# image_meta => [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
+# pool_size => [7, 7]
+# num_classes => 81
+def build_fpn_mask_graph(rois, feature_maps, image_meta, pool_size, num_classes, train_bn=True):
+    # ROIAlign 层，将所有 rois 统一为 7 * 7 大小
+    # x => [N, 200, 7, 7, 256]
+    x = PyramidROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + feature_maps)
+
+    # 一系列的卷积层
+    x = KL.TimeDistributed()
+
 
 
 ############################################################
@@ -1128,13 +1171,23 @@ class MaskRCNN():
             input_gt_masks
         ])
 
-        # 
+        # mrcnn_class_logits => [N, 200, num_classes]
+        # mrcnn_class => [N, 200, num_classes]
+        # mrcnn_bbox => [N, 200, num_classes, 4]
         mrcnn_class_logits, mrcnn_class, mrcnn_bbox = fpn_classifier_graph(
             rois, mrcnn_feature_maps, input_image_meta,
             config.POOL_SIZE, config.NUM_CLASSES,
             train_bn=config.TRAIN_BN,
             fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE
         ) 
+
+        mrcnn_mask = build_fpn_mask_graph(
+            rois, mrcnn_feature_maps,
+            input_image_meta,
+            config.MASK_POOL_SIZE,
+            config.NUM_CLASSES,
+            train_bn=config.TRAIN_BN
+        )
 
 
 

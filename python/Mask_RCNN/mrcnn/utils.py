@@ -349,6 +349,7 @@ def minimize_mask(bbox, mask, mini_shape):
 # 而该函数提取的 anchors 位置与大小直接是相对于原图的
 def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     # 这里不是生成网格，只是为了计算方便
+    # 注意每个 feature_map 提取的 anchor 大小是不同的
     scales, ratios = np.meshgrid(np.array(scales), np.array(ratios))
     scales = scales.flatten()
     ratios = ratios.flatten()
@@ -376,7 +377,8 @@ def generate_anchors(scales, ratios, shape, feature_stride, anchor_stride):
     return boxes
 
 
-# scales => 提取的 anchor 的边长 (32, 64, 128, 256, 512)
+# scales => 提取的 anchor 的边长 (32, 64, 128, 256, 512), 代表每个 feature_map 提取的 anchor 大小是不同的
+# 大的 map 提取小的 anchor, 小的 map 提取大的 anchor
 # ratios => 每个 cell 提取的三个 anchor 的宽高比 [0.5, 1, 2]
 # feature_shapes => 6 个特征图的大小 [[256, 256], [128, 128], [64, 64], [32, 32], [16, 16]] 
 # feature_strides => 经过 reset 网络后提取的 5 个 feature_map 相比原图缩小的比例 [4, 8, 16, 32, 64]
