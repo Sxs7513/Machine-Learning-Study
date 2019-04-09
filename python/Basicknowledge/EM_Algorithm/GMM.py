@@ -79,15 +79,6 @@ def update_Pi(W):
     return Pi
 
 
-# 更新标准差
-def update_Var(X, Mu, W):
-    n_clusters = W.shape[1]
-    Var = np.zeros((n_clusters, 2))
-    for i in range(n_clusters):
-        Var[i] = np.average((X - Mu[i]) ** 2, axis=0, weights=W[:, i])
-    return Var
-
-
 # 更新均值
 def update_Mu(X, W):
     n_clusters = W.shape[1]
@@ -96,6 +87,14 @@ def update_Mu(X, W):
         Mu[i] = np.average(X, axis=0, weights=W[:, i])
     return Mu
 
+
+# 更新标准差
+def update_Var(X, Mu, W):
+    n_clusters = W.shape[1]
+    Var = np.zeros((n_clusters, 2))
+    for i in range(n_clusters):
+        Var[i] = np.average((X - Mu[i]) ** 2, axis=0, weights=W[:, i])
+    return Var
 
 
 if __name__ == "__main__":
@@ -123,6 +122,7 @@ if __name__ == "__main__":
     for i in range(5):
         plot_clusters(X, Mu, Var, true_Mu, true_Var)
         loglh.append(logLH(X, Pi, Mu, Var))
+        # 先计算w再计算Pi
         W = update_W(X, Mu, Var, Pi)
         Pi = update_Pi(W)
         Mu = update_Mu(X, W)
