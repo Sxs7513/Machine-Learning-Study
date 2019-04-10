@@ -707,8 +707,8 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta, pool_size, num_classes,
 #  Loss Functions
 ############################################################
 
-# rpn_match => [N, 256, 4]
-# rpn_class_logits => [N, 216888, 2]
+# rpn_match => 前景背景分类真实值 [N, 216888, 1]
+# rpn_class_logits => 前景背景分类预测值 [N, 216888, 2]
 def rpn_class_loss_graph(rpn_match, rpn_class_logits):
 
 
@@ -1161,7 +1161,7 @@ class MaskRCNN():
             for o, n in zip(outputs, output_names)
         ]
 
-        # 要进入 ProposalLayer 层的数据 
+        # rpn_class, rpn_bbox 是要进入 ProposalLayer 层的数据, rpn_class_logits 用于损失函数
         # rpn_class_logits => [N, AV, 2]  AV 是五个 feature_map 所有 anchors 的数量(216888)
         # rpn_class => [N, AV, 2]
         # rpn_bbox => [N, AV, 4]
