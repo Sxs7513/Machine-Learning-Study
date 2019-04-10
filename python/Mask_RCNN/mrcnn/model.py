@@ -521,9 +521,8 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
 
     # 把上面的那个 expand_dims 的去掉，已经没有利用价值啦
     masks = tf.squeeze(masks, axis=3)
-    # 四舍五入，这个把英文原文粘一下
-    # Threshold mask pixels at 0.5 to have GT masks be 0 or 1 to use with
-    # binary cross entropy loss.
+    # 四舍五入，因为上面的 crop_and_resize 是双线性差值, 那么 mask 中肯定会产生浮点数
+    # 但是 mask 是需要只有 0 1 的, 所以处理一下
     masks = tf.round(masks)
 
     # [200(可能小于这个数), 4]
@@ -672,12 +671,45 @@ def fpn_classifier_graph(rois, feature_maps, image_meta, pool_size, num_classes,
 # pool_size => [7, 7]
 # num_classes => 81
 def build_fpn_mask_graph(rois, feature_maps, image_meta, pool_size, num_classes, train_bn=True):
-    # ROIAlign 层，将所有 rois 统一为 7 * 7 大小
-    # x => [N, 200, 7, 7, 256]
+    # ROIAlign 层，将所有 rois 统一为 14 * 14 大小
+    # x => [N, 200, 14, 14, 256]
     x = PyramidROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + feature_maps)
 
-    # 一系列的卷积层
-    x = KL.TimeDistributed()
+    # 一系列的卷积层, 保持滑动窗口大小均为 (3, 3), 不会改变大小
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv1")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn1')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv2")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn2')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv3")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn3')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv4")(x)
+    x = KL.TimeDistributed(BatchNorm(), name='mrcnn_mask_bn4')(x, training=train_bn)
+    x = KL.Activation('relu')(x)
+
+    # 反卷积, 扩大大小, [N, 200, 28, 28, 256], 公式未 new = s(i−1) + k − 2p, i 为图大小, k 为卷积核大小, p 为 padding
+    x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"), name="mrcnn_mask_deconv")(x)
+    # 对每一类都输出一个 mask 预测, 这样可以避免不同实例之间的类别竞争
+    # 并且注意 mask 需要用 sigmoid 来激活
+    # [N, 200, 28, 28, num_classes]
+    x = KL.TimeDistributed(KL.Conv2D(num_classes, (1, 1), strides=1, activation="sigmoid"), name="mrcnn_mask")(x)
+
+    return x
+
+
+
+############################################################
+#  Loss Functions
+############################################################
+
+# rpn_match => [N, 256, 4]
+# rpn_class_logits => [N, 216888, 2]
+def rpn_class_loss_graph(rpn_match, rpn_class_logits):
 
 
 
@@ -760,7 +792,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None, u
 # gt_class_ids => 图片中所有的 truth-boxes 类别
 # gt_boxes => 图片中所有的 truth-boxes 坐标
 def build_rpn_targets(image_shape, anchors, gt_class_ids, gt_boxes, config):
-    # 用于标记每个 anchor 是否是正负样本, [num_anchors, 1]
+    # 用于标记每个 anchor 是否是正负样本, [num_anchors]
     rpn_match = np.zeros([anchors.shape[0]], dtype=np.int32)
     # 正样本 anchors 的 bbox 回归值, [256, 4]
     rpn_bbox = np.zeros((config.RPN_TRAIN_ANCHORS_PER_IMAGE, 4))
@@ -905,7 +937,7 @@ def data_generator(
             if not np.any(gt_class_ids > 0):
                 continue
 
-            # rpn_match => 用于标记每个 anchor 是否是正负样本, 其中正负样本数总和为 256, [num_anchors(261888), 1], 非正负样本的值均为 0
+            # rpn_match => 用于标记每个 anchor 是否是正负样本, 其中正负样本数总和为 256, [num_anchors(261888)], 非正负样本的值均为 0
             # rpn_bbox => 正样本 anchors 的 bbox 回归值, [256, 4]
             rpn_match, rpn_bbox = build_rpn_targets(image.shape, anchors, gt_class_ids, gt_boxes, config)
 
@@ -1011,9 +1043,11 @@ class MaskRCNN():
         input_image_meta = KL.Input(shape=[config.IMAGE_META_SIZE], name="input_image_meta")
 
         if mode == "training":
+            # 下面凡是 Input 的都是真实值, 需要 data_generator 构建并输入的
+
             # 用于标记每个 anchor 是否是正负样本, 其中正负样本数总和为 256, [N, num_anchors(261888), 1], 非正负样本的值均为 0
             input_rpn_match = KL.Input(shape=[None, 1], name="input_rpn_match", dtype=tf.int32)
-            # 正样本 anchors 的 bbox 回归值, [N, 256, 4]
+            # rois 的 bbox 回归值, [N, 256, 4]
             input_rpn_bbox = KL.Input(shape=[None, 4], name="input_rpn_bbox", dtype=tf.float32)
             
             # [N, 100] 但是这个 100 是最大值, 基本填不满的
@@ -1128,7 +1162,7 @@ class MaskRCNN():
         ]
 
         # 要进入 ProposalLayer 层的数据 
-        # rpn_class_logits => [N, AV, 2]  AV 是五个 feature_map 所有 anchors 的数量 
+        # rpn_class_logits => [N, AV, 2]  AV 是五个 feature_map 所有 anchors 的数量(216888)
         # rpn_class => [N, AV, 2]
         # rpn_bbox => [N, AV, 4]
         rpn_class_logits, rpn_class, rpn_bbox = outputs
@@ -1155,39 +1189,48 @@ class MaskRCNN():
             else:
                 target_rois = rpn_rois
 
-        # 用于提供 rois 即进入 FPN 网络的训练数据, 包括预测的正负样本
-        # 预测的正样本与最接近的 truth-box 的边框回归值 (可能会奇怪为社么是200个
-        # 因为补 0 了, 负样本对应的全是 0). 还有正样本对应的类别以及正样本对应的 mask
-        # rois => [N, 200, 4]
-        # target_class_ids => [N, 200]
-        # target_bbox => [N, 200, 4]
-        # target_mask => [N, 200, 28, 28]
-        rois, target_class_ids, target_bbox, target_mask = DetectionTargetLayer(
-            config, name="proposal_targets"
-        )([
-            target_rois, 
-            input_gt_class_ids, 
-            gt_boxes, 
-            input_gt_masks
-        ])
+            # 用于提供 rois 即进入 FPN 网络的训练数据, 包括预测的正负样本
+            # 预测的正样本与最接近的 truth-box 的边框回归值 (可能会奇怪为社么是200个
+            # 因为补 0 了, 负样本对应的全是 0). 还有正样本对应的类别以及正样本对应的 mask
+            # rois => [N, 200, 4]
+            # target_class_ids => [N, 200]
+            # target_bbox => [N, 200, 4]
+            # target_mask => [N, 200, 28, 28]
+            rois, target_class_ids, target_bbox, target_mask = DetectionTargetLayer(
+                config, name="proposal_targets"
+            )([
+                target_rois, 
+                input_gt_class_ids, 
+                gt_boxes, 
+                input_gt_masks
+            ])
 
-        # mrcnn_class_logits => [N, 200, num_classes]
-        # mrcnn_class => [N, 200, num_classes]
-        # mrcnn_bbox => [N, 200, num_classes, 4]
-        mrcnn_class_logits, mrcnn_class, mrcnn_bbox = fpn_classifier_graph(
-            rois, mrcnn_feature_maps, input_image_meta,
-            config.POOL_SIZE, config.NUM_CLASSES,
-            train_bn=config.TRAIN_BN,
-            fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE
-        ) 
+            # 获得针对 rois 的分类与边框回归的预测值
+            # mrcnn_class_logits => [N, 200, num_classes]
+            # mrcnn_class => [N, 200, num_classes]
+            # mrcnn_bbox => [N, 200, num_classes, 4]
+            mrcnn_class_logits, mrcnn_class, mrcnn_bbox = fpn_classifier_graph(
+                rois, mrcnn_feature_maps, input_image_meta,
+                config.POOL_SIZE, config.NUM_CLASSES,
+                train_bn=config.TRAIN_BN,
+                fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE
+            ) 
 
-        mrcnn_mask = build_fpn_mask_graph(
-            rois, mrcnn_feature_maps,
-            input_image_meta,
-            config.MASK_POOL_SIZE,
-            config.NUM_CLASSES,
-            train_bn=config.TRAIN_BN
-        )
+            # 获得针对 rois 的 mask 预测值
+            # [N, 200, 28, 28, 81(类别数)]
+            mrcnn_mask = build_fpn_mask_graph(
+                rois, mrcnn_feature_maps,
+                input_image_meta,
+                config.MASK_POOL_SIZE,
+                config.NUM_CLASSES,
+                train_bn=config.TRAIN_BN
+            )
+
+            output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
+
+            # 构建损失函数
+            rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")([input_rpn_match, rpn_class_logits])
+
 
 
 

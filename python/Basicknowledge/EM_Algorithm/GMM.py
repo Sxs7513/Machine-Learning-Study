@@ -122,7 +122,7 @@ if __name__ == "__main__":
     for i in range(5):
         plot_clusters(X, Mu, Var, true_Mu, true_Var)
         loglh.append(logLH(X, Pi, Mu, Var))
-        # 先计算w再计算Pi
+        # 先计算 w 再计算Pi
         W = update_W(X, Mu, Var, Pi)
         Pi = update_Pi(W)
         Mu = update_Mu(X, W)
