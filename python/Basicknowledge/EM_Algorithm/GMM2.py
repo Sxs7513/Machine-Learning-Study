@@ -47,8 +47,7 @@ def M_step(X, gamma):
     sigma = np.zeros((C, d, d))
     for j in range(C):
         sigma[j, :, :] = np.sum(np.expand_dims(gamma[:, j], -1) * ((X - mu[j]) ** 2), axis=0) / np.sum(gamma[:, j])
-    print(sigma)
-    print(".....")
+
     pi = np.zeros((C, ))
     for j in range(C):
         pi[j] = np.sum(gamma[:, j]) / N
