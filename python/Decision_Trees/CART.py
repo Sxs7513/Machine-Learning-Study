@@ -134,12 +134,14 @@ def prune(tree, minGain, evalFunc=gini):
         len3 = pd.concat([tree.trueBranch.data, tree.falseBranch.data])
         p = float(len1) / (len1 + len2)
 
+        # 计算在分开它们时的基尼系数
         gain = evalFunc(
             pd.concat([tree.trueBranch.data, tree.falseBranch.data])['Name'])
         - p * evalFunc(tree.trueBranch.data['Name'])
         - (1 - p) * evalFunc(tree.falseBranch.data['Name'])
 
-        # 发现 gain 小于阈值，代表该分叉没有达到期望的效果，则合并分支
+        # 发现 gain 小于阈值，代表该分叉没有达到期望的效果，即没有剪好
+        # 所以合并它们
         if (gain < minGain):
             tree.data = pd.concat(
                 [tree.trueBranch.data, tree.falseBranch.data])
