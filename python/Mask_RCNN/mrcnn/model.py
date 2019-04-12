@@ -216,12 +216,12 @@ class ProposalLayer(KE.Layer):
         self.nms_threshold = nms_threshold
 
     
-    # inputs => rpn_class, rpn_bbox, anchors
+    # inputs => [rpn_class, rpn_bbox, anchors]
     # rpn_class => [N, AV, 2]  AV 是五个 feature_map 所有 anchors 的数量
     # rpn_bbox => [N, AV, 4]
     # anchors => 在图片大小为 1024 * 1024 的情况下为 [N, 261888, 4]
     def call(self, inputs):
-        # 取出前景得分 [N, AV, 1]
+        # 取出前景得分 [N, AV]
         scores = inputs[0][:, :, 1]
         # 取出 bbox 预测, 并
         deltas = inputs[1]
@@ -233,7 +233,8 @@ class ProposalLayer(KE.Layer):
         pre_nms_limit = tf.minimum(self.config.PRE_NMS_LIMIT, tf.shape(anchors)[1])
         # 找到分最高的 anchor 的 index
         ix = tf.nn.top_k(scores, pre_nms_limit, sorted=True, name="top_anchors").indices
-        # tf.gather 不支持 batch, 所以 hack 下, 选择出来对应的得分
+        # tf.gather 不支持 batch, 因为它只支持单维度的切片, 所以 hack 下, 选择出来对应的得分
+        # 不过这里为社么不用 tf.gather_nd ? 之后可以来实验一下
         scores = utils.batch_slice([scores, ix], lambda x, y: tf.gather(x, y), self.config.IMAGES_PER_GPU)
         # 同理, 对应的 bbox
         deltas = utils.batch_slice([deltas, ix], lambda x, y: tf.gather(x, y), self.config.IMAGES_PER_GPU)
@@ -543,7 +544,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     return rois, roi_gt_class_ids, deltas, masks
 
 
-# 
+# 自定义层, 用于筛选出来 rois, 用于损失计算
 class DetectionTargetLayer(KE.Layer):
     def __init__(self, config, **kwargs):
         super(DetectionTargetLayer, self).__init__(**kwargs)
@@ -629,7 +630,7 @@ def build_rpn_model(anchor_stride, anchors_per_location, depth):
 ############################################################
 
 # 用于输出 rois 创建分类与边框回归的预测值
-# rois => [N, 200, 4]
+# rois => [N, 200(或者2000), 4]
 # feature_maps => [[N, 256，256，256], [N, 128，128，256], [N, 64，64，256], [N, 32，32，256]]
 # image_meta => [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
 # pool_size => [7, 7]
@@ -654,7 +655,7 @@ def fpn_classifier_graph(rois, feature_maps, image_meta, pool_size, num_classes,
     mrcnn_class_logits = KL.TimeDistributed(KL.Dense(num_classes), name='mrcnn_class_logits')(shared)
     mrcnn_probs = KL.TimeDistributed(KL.Activation("softmax"), name="mrcnn_class")(mrcnn_class_logits)
 
-    # 用于边框回归
+    # 用于边框回归, 注意这里对每一类都预测了回归, 这样可以达到避免同类竞争的目的
     # [N, 200, num_classes * 4]
     x = KL.TimeDistributed(KL.Dense(num_classes * 4, activation='linear'), name='mrcnn_bbox_fc')(shared)
     s = K.int_shape(x)
@@ -693,6 +694,7 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta, pool_size, num_classes,
     x = KL.Activation('relu')(x)
 
     # 反卷积, 扩大大小, [N, 200, 28, 28, 256], 公式未 new = s(i−1) + k − 2p, i 为图大小, k 为卷积核大小, p 为 padding
+    # https://www.cnblogs.com/cvtoEyes/p/8513958.html
     x = KL.TimeDistributed(KL.Conv2DTranspose(256, (2, 2), strides=2, activation="relu"), name="mrcnn_mask_deconv")(x)
     # 对每一类都输出一个 mask 预测, 这样可以避免不同实例之间的类别竞争
     # 并且注意 mask 需要用 sigmoid 来激活
@@ -707,9 +709,166 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta, pool_size, num_classes,
 #  Loss Functions
 ############################################################
 
+# 计算边框回归的坐标损失, 下面的链接说明了为社么用 L1 损失
+# https://zhuanlan.zhihu.com/p/48426076
+# y_true => [num, 4]
+# y_pred => [num, 4]
+def smooth_l1_loss(y_true, y_pred):
+    diff = K.abs(y_true - y_pred)
+    less_than_one = k.cast(K.less(diff, 1.0), "float32")
+    loss = (less_than_one * 0.5 * diff ** 2) + (1 - less_than_one) * (diff - 0.5)
+    
+    return loss
+
+
+# 计算 rpn 的前景背景分类的损失
 # rpn_match => 前景背景分类真实值 [N, 216888, 1]
 # rpn_class_logits => 前景背景分类预测值 [N, 216888, 2]
 def rpn_class_loss_graph(rpn_match, rpn_class_logits):
+    # [N, 216888]
+    rpn_match = tf.squeeze(rpn_match, -1)
+    # 找到前景 anchor 位置, 并将它们标记为 1, 其他的为 0
+    anchor_class = tf.cast(tf.equal(rpn_match, 1), tf.int32)
+    # 找到所有前景背景 anchor 的位置
+    indices = tf.where(K.not_equal(rpn_match, 0))
+    # 找到对应的预测值 [N * 256, 2], tf.gather_nd 与 tf.gather 区别如下
+    # https://zhuanlan.zhihu.com/p/51446095
+    rpn_class_logits = tf.gather_nd(rpn_class_logits, indices)
+    # [N * 256], 前景为 1, 背景为 0
+    anchor_class = tf.gather_nd(anchor_class, indices)
+
+    # softmax 激活, 交叉熵计算损失函数
+    loss = K.sparse_categorical_crossentropy(
+        target=anchor_class,
+        output=rpn_class_logits,
+        from_logits=True
+    )
+    # 应该是为了减少计算吧, 在没有正负样本的时候, 直接忽略....
+    loss = K.switch(tf.size(loss) > 0, K.mean(loss), tf.constant(0.0))
+
+    return loss
+
+
+# 计算 rpn 的边框回归的损失, 只有 正anchor 会进入计算
+# target_bbox => [N, 256, 4]
+# rpn_match => [N, 261888, 1]
+# rpn_bbox => [N, 261888, 4]
+def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox)
+    rpn_match = K.squeeze(rpn_match, -1)
+    indices = tf.where(K.equal(rpn_match, 1))
+    # 注意只有 正anchors 会进入损失计算, [N * 正面数量, 4]
+    rpn_bbox = tf.gather_nd(rpn_bbox, indices)
+
+    # 找到每个 batch 里面 正anchor 的个数, [N, 1]
+    batch_counts = K.sum(K.cast(K.equal(rpn_match, 1), tf.int32), axis=1)
+    # 将所有 正achor 抽取出来, [N * 128(正的个数为一半), 4]
+    target_bbox = batch_pack_graph(target_bbox, batch_counts, config.IMAGES_PER_GPU)
+
+    # 计算损失
+    loss = smooth_l1_loss(target_bbox, rpn_bbox)
+
+    loss = K.switch(tf.size(loss) > 0, K.mean(loss), tf.constant(0.0))
+    return loss
+
+
+# 计算 rois 分类损失
+# target_class_ids => [N, 200]
+# pred_class_logits => [N, 200, num_classes]
+# active_class_ids => [N, num_classes]
+def mrcnn_class_loss_graph(target_class_ids, pred_class_logits, active_class_ids):
+    target_class_ids = tf.cast(target_class_ids, "int64")
+    # 找到预测的 rois 的类别, [N, 200]
+    pred_class_ids = tf.argmax(pred_class_logits, axis=2)
+    # 如果预测的类别在数据集中, 那么为 1, 否则为 0
+    # [N, 200], 为社么是这个 shape 是由于 gather 的特性导致的, 实在不理解可以自己在 test 里面试试
+    pred_active = tf.gather(active_class_ids[0], pred_class_ids)
+
+    # softmax交叉熵计算损失, [N, 200]
+    loss = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=target_class_ids, logits=pred_class_logits)
+
+    # 保证这个框最大的得分 class 如果不属于其数据集，则不进入本框 Loss
+    loss = loss * pred_active
+
+    # 计算平均, 只除以在本数据集的类别数 [N * 200 * loss] / [N * 200 * (0或者1)] = [1] 
+    loss = tf.reduce_sum(loss) / tf.reduce_sum(pred_active)
+
+    return loss
+
+
+# 计算 rois 的边框回归
+# target_bbox => [N, 200, 4]
+# target_class_ids => [N, 200]
+# pred_bbox => [N, 200, num_classes, 4]
+def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
+    target_class_ids = K.reshape(target_class_ids, (-1, ))
+    target_bbox = K.reshape(target_bbox, (-1, 4))
+    # [N * 200, num_classes, 4]
+    pred_bbox = K.reshape(pred_bbox, (-1, K.int_shape(pred_bbox)[2], 4))
+
+    # 找到正样本的序号
+    # tf.where(target_class_ids > 0) => [N * 正个数, 1]
+    # [N * 正个数]
+    positive_roi_ix = tf.where(target_class_ids > 0)[:, 0]
+    # 找到对应的类别 [N * 正个数]
+    positive_roi_class_ids = tf.cast(tf.gather(target_class_ids, positive_roi_ix), tf.int64)
+    # [N * 正个数, N * 正个数]
+    indices = tf.stack([positive_roi_ix, positive_roi_class_ids], axis=1)
+
+    # [N * 正个数, 4]
+    target_bbox = tf.gather(target_bbox, positive_roi_ix)
+    # 取出来预测的对应类别的 bbox, 因为每个类别都会预测一个 bbox
+    # [N * 正个数, 4]
+    pred_bbox = tf.gather_nd(pred_bbox, indices)
+
+    # [N * 正个数, 4]
+    loss = K.switch(
+        tf.size(target_bbox) > 0,
+        smooth_l1_loss(y_true=target_bbox, y_pred=pred_bbox),
+        tf.constant(0.0))
+    )
+
+    # K.mean 是将所有数字加起来, 然后除以它们的个数
+    loss = K.mean(loss)
+
+    return loss
+
+
+# 计算 mask 的损失
+# target_masks => [N, 200, 28, 28]
+# target_class_ids => [N, 200]
+# pred_masks => [N, 200, 28, 28, 81]
+def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
+    # [N * 200]
+    target_class_ids = K.reshape(target_class_ids, (-1, ))
+    mask_shape = tf.shape(target_masks)
+    # [N * 200, 28, 28]
+    target_masks = K.reshape(target_masks, (-1, mask_shape[2], mask_shape[3]))
+    pred_shape = tf.shape(pred_masks)
+    # [N * 200, 28, 28, 81]
+    pred_masks = K.reshape(pred_masks, (-1, pred_shape[2], pred_shape[3], pred_shape[4]))
+    # [N * 200, 81, 28, 28]
+    pred_masks = tf.transpose(pred_masks, [0, 3, 1, 2])
+
+    # 下面与 mrcnn_bbox_loss_graph 逻辑基本一致
+    positive_ix = tf.where(target_class_ids > 0)[:, 0]
+    positive_class_ids = tf.cast(tf.gather(target_class_ids, positive_ix), tf.int64)
+    indices = tf.stack([positive_ix, positive_class_ids], axis=1)
+
+    # [N * 正个数, 28, 28]
+    y_true = tf.gather(target_masks, positive_ix)
+    # [N * 正个数, 28, 28]
+    y_pred = tf.gather_nd(pred_masks, indices)
+
+    # 使用 sigmiod 来计算损失, 因为 mask 真值都是由 0 1 组成的 
+    loss = K.switch(
+        tf.size(y_true) > 0,
+        K.binary_crossentropy(target=y_true, output=y_pred),
+        tf.constant(0.0))
+    )
+
+    loss = K.mean(loss)
+
+    return loss
 
 
 
@@ -772,7 +931,7 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None, u
     bbox = utils.extract_bboxes(mask)
 
     # 该图片隶属数据集中所有的 class 标记为 1，不隶属本数据集合的 class 标记为0
-    # 这一步真的是没看懂...有什么必要吗???
+    # 这个是为了在 mrcnn_class_loss_graph 计算分类损失的时候, 保证这个框最大的得分 class 如果不属于其数据集，则不进入本框 Loss
     active_class_ids = np.zeros([dataset.num_classes], dtype=np.int32)
     source_class_ids = dataset.source_class_ids[dataset.image_info[image_id]["source"]]
     active_class_ids[source_class_ids] = 1
@@ -1161,7 +1320,7 @@ class MaskRCNN():
             for o, n in zip(outputs, output_names)
         ]
 
-        # rpn_class, rpn_bbox 是要进入 ProposalLayer 层的数据, rpn_class_logits 用于损失函数
+        # rpn_class, rpn_bbox 是要进入 ProposalLayer 层的数据并且会进入损失函数, rpn_class_logits 只用于损失函数
         # rpn_class_logits => [N, AV, 2]  AV 是五个 feature_map 所有 anchors 的数量(216888)
         # rpn_class => [N, AV, 2]
         # rpn_bbox => [N, AV, 4]
@@ -1229,8 +1388,43 @@ class MaskRCNN():
             output_rois = KL.Lambda(lambda x: x * 1, name="output_rois")(rois)
 
             # 构建损失函数
-            rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")([input_rpn_match, rpn_class_logits])
 
+            # 计算 rpn 的前景背景分类损失
+            rpn_class_loss = KL.Lambda(lambda x: rpn_class_loss_graph(*x), name="rpn_class_loss")([input_rpn_match, rpn_class_logits])
+            # 计算 rpn 的边框回归损失
+            rpn_bbox_loss = KL.Lambda(lambda x: rpn_bbox_loss_graph(config, *x), name="rpn_bbox_loss")([input_rpn_bbox, input_rpn_match, rpn_bbox])
+            # 计算 rois 分类损失
+            class_loss = KL.Lambda(lambda x: mrcnn_class_loss_graph(*x), name="mrcnn_class_loss")([target_class_ids, mrcnn_class_logits, active_class_ids])
+            # 计算 rois 的边框回归损失
+            bbox_loss = KL.Lambda(lambda x: mrcnn_bbox_loss_graph(*x), name="mrcnn_bbox_loss")([target_bbox, target_class_ids, mrcnn_bbox])
+            # 计算 mask 的损失
+            mask_loss = KL.Lambda(lambda x: mrcnn_mask_loss_graph(*x), name="mrcnn_mask_loss")([target_mask, target_class_ids, mrcnn_mask])
+
+            # 这些都是真值, 需要外界输入的
+            inputs = [input_image, input_image_meta, input_rpn_match, input_rpn_bbox, input_gt_class_ids, input_gt_boxes, input_gt_masks]
+
+            if not config.USE_RPN_ROIS:
+                inputs.append(input_rois)
+
+            outputs = [
+                rpn_class_logits, rpn_class, rpn_bbox,
+                mrcnn_class_logits, mrcnn_class, mrcnn_bbox, mrcnn_mask,
+                rpn_rois, output_rois,
+                rpn_class_loss, rpn_bbox_loss, class_loss, bbox_loss, mask_loss
+            ]
+            # 生成网络
+            model = KM.Model(inputs, outputs, name='mask_rcnn')
+        else:
+            # 在训练的的情况下, 
+            mrcnn_class_logits, mrcnn_class, mrcnn_bbox = fpn_classifier_graph(
+                rpn_rois, mrcnn_feature_maps, input_image_meta,
+                config.POOL_SIZE, config.NUM_CLASSES,
+                train_bn=config.TRAIN_BN,
+                fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE
+            )
+
+        return model
+            
 
 
 
@@ -1311,8 +1505,7 @@ class MaskRCNN():
 
 # 将某个图片的现在的 id，原始的大小[height, width, 3]，进入训练时的大小(比如 1024 * 1024)
 # 窗口信息(看 utils 模块的 resize_image 方法)，scale 即图像缩放因子
-# active_class_ids 即图片隶属数据集中所有的 class，是一个数组，数量为 class 数量
-# 里面所有的数为 1
+# active_class_ids 即图片隶属数据集中所有的 class，是一个数组，数量为 class 数量, 里面所有的数为 1
 def compose_image_meta(image_id, original_image_shape, image_shape, window, scale, active_class_ids):
     meta = np.array(
         [image_id],
@@ -1361,6 +1554,13 @@ def trim_zeros_graph(boxes, name='trim_zeros'):
     non_zeros = tf.cast(tf.reduce_sum(tf.abs(boxes), axis=1), tf.bool)
     boxes = tf.boolean_mask(boxes, non_zeros, name=name)
     return boxes, non_zeros
+
+
+def batch_pack_graph(x, counts, num_rows):
+    outputs = []
+    for i in range(num_rows):
+        outputs.append(x[i, ::counts[i]])
+    return tf.concat(outputs, axis=0)
 
 
 # 作用是将 box 的坐标归一化, 虽然与 util 模块重复了
