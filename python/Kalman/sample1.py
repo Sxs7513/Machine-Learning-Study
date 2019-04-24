@@ -1,4 +1,5 @@
 # https://blog.csdn.net/codesamer/article/details/81191487
+# http://czy13.com/%E6%9C%BA%E5%99%A8%E5%AD%A6%E4%B9%A0/kalman-filters/
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -15,13 +16,13 @@ z_mat = z + noise
 
 # 定义 x 的初始状态，即位置和速度
 x_mat = np.array([[0,], [0,]])
-# 定义初始状态协方差矩阵
+# 定义初始状态噪声协方差矩阵
 p_mat = np.array([[1, 0], [0, 1]])
 # 定义状态转移矩阵，因为每秒钟采一次样，所以delta_t = 1
 f_mat = np.array([[1, 1], [0, 1]])
-# 定义状态转移协方差矩阵，这里我们把协方差设置的很小，因为觉得状态转移矩阵准确度高
+# 定义误差矩阵，这里把值设置的较小，代表该系统误差较小
 q_mat = np.array([[0.0001, 0], [0, 0.0001]])
-# 定义观测矩阵
+# 定义观测转移矩阵, 因为是匀速运动并且物理量能直接通过传感器测量，所以 1，0 即可
 h_mat = np.array([[1, 0]])
 # 定义观测噪声协方差
 r_mat = np.array([[1]])
