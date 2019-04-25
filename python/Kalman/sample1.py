@@ -1,5 +1,6 @@
 # https://blog.csdn.net/codesamer/article/details/81191487
 # http://czy13.com/%E6%9C%BA%E5%99%A8%E5%AD%A6%E4%B9%A0/kalman-filters/
+# https://zhuanlan.zhihu.com/p/21692854
 import numpy as np
 import matplotlib.pyplot as plt
 
