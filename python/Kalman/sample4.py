@@ -138,7 +138,7 @@ def main():
     xTrue = np.zeros((4, 1))
     PEst = np.eye(4)
 
-    # 初始的控制矩阵
+    # 初始的航位状态
     xDR = np.zeros((4, 1))
 
     # history
