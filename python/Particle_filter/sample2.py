@@ -1,4 +1,7 @@
-
+# http://sugar918.com/index.php/2018/02/07/particle_filter_dai_ma_shi_xian_python3_opencv3_numpy/
+# https://blog.csdn.net/github_39611196/article/details/83380650
+# https://www.learnopencv.com/object-tracking-using-opencv-cpp-python/
+# particle filter python opencv
 import cv2
 import numpy as np
 
