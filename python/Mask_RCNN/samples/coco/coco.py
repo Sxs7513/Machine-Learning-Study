@@ -219,6 +219,12 @@ if __name__ == '__main__':
     config.display()
 
     # 生成模型
+    if args.command == "train":
+        model = modellib.MaskRCNN(mode="training", config=config,
+                                  model_dir=args.logs)
+    else:
+        model = modellib.MaskRCNN(mode="inference", config=config,
+                                  model_dir=args.logs)
 
     # 加载预训练模型
 

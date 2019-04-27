@@ -1426,6 +1426,8 @@ class MaskRCNN():
         return model
             
 
+    def load_weights(self, filepath, by_name=False, exclude=None):
+        
 
 
     # 初始化保存模型的路径，并且如果指定了 model_path，那么尝试从文件名中还原 epoch 步数
