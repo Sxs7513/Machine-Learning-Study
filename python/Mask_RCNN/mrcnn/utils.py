@@ -11,7 +11,7 @@ import skimage.transform
 import urllib.request
 import shutil
 import warnings
-# from distutils.version import LooseVersion
+from distutils.version import LooseVersion
 
 # URL from which to download the latest COCO trained weights
 COCO_MODEL_URL = "https://github.com/matterport/Mask_RCNN/releases/download/v2.0/mask_rcnn_coco.h5"
@@ -328,7 +328,7 @@ def resize_mask(mask, scale, padding, crop=None):
 # 用于把 mask 缩小，来节省内存，之后可以用 expand_masks 来复原
 def minimize_mask(bbox, mask, mini_shape):
     # mask 的数量 shape 在最后一个维度
-    mini_mask = np.zeors(mini_shape + (mask.shape[-1], ), dtype=bool)
+    mini_mask = np.zeros(mini_shape + (mask.shape[-1], ), dtype=bool)
     for i in range(mini_mask.shape[-1]):
         m = mask[:, :, i].astype(bool)
         y1, x1, y2, x2 = bbox[i][:4]

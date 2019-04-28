@@ -16,6 +16,12 @@ import keras.models as KM
 
 from mrcnn import utils
 
+# from keras.backend.tensorflow_backend import set_session
+# config = tf.ConfigProto()
+# config.gpu_options.allow_growth = True
+# sess = tf.Session(config=config)
+# set_session(sess) 
+
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
@@ -1061,11 +1067,11 @@ def data_generator(
     # 生成五个特征图的所有 anchors，大小位置相对于原图
     # 对于 1024 * 1024 的原图, a => [261888 , 4]
     anchors = utils.generate_pyramid_anchors(
-        self.config.RPN_ANCHOR_SCALES,
-        self.config.RPN_ANCHOR_RATIOS,
+        config.RPN_ANCHOR_SCALES,
+        config.RPN_ANCHOR_RATIOS,
         backbone_shapes,
-        self.config.BACKBONE_STRIDES,
-        self.config.RPN_ANCHOR_STRIDE
+        config.BACKBONE_STRIDES,
+        config.RPN_ANCHOR_STRIDE
     )
 
     while True:
@@ -1446,6 +1452,7 @@ class MaskRCNN():
         if 'layer_names' not in f.attrs and 'model_weights' in f:
             f = f['model_weights']
 
+        keras_model = self.keras_model
         layers = keras_model.inner_model.layers if hasattr(keras_model, "inner_model") else keras_model.layers
 
         # Exclude some layers
@@ -1594,7 +1601,7 @@ class MaskRCNN():
         }
 
         if layers in layer_regex.keys():
-            layers = layer_regex[layer_regex]
+            layers = layer_regex[layers]
 
         # 
         train_generator = data_generator(
@@ -1686,11 +1693,11 @@ class MaskRCNN():
 # active_class_ids 即图片隶属数据集中所有的 class，是一个数组，数量为 class 数量, 里面所有的数为 1
 def compose_image_meta(image_id, original_image_shape, image_shape, window, scale, active_class_ids):
     meta = np.array(
-        [image_id],
-        list(original_image_shape),
-        list(image_shape),
-        list(window),
-        [scale],
+        [image_id] +
+        list(original_image_shape) +
+        list(image_shape) +
+        list(window) +
+        [scale] +
         list(active_class_ids)
     )
     
@@ -1737,7 +1744,7 @@ def trim_zeros_graph(boxes, name='trim_zeros'):
 def batch_pack_graph(x, counts, num_rows):
     outputs = []
     for i in range(num_rows):
-        outputs.append(x[i, ::counts[i]])
+        outputs.append(x[i, :counts[i]])
     return tf.concat(outputs, axis=0)
 
 
