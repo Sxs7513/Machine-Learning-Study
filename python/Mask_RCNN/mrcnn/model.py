@@ -225,7 +225,7 @@ class ProposalLayer(KE.Layer):
         scores = inputs[0][:, :, 1]
         # 取出 bbox 预测, 并
         deltas = inputs[1]
-        deltas = deltas * np.reshape(config.RPN_BBOX_STD_DEV, [1, 1, 4])
+        deltas = deltas * np.reshape(self.config.RPN_BBOX_STD_DEV, [1, 1, 4])
         # 取出 anchors
         anchors = inputs[2]
 
@@ -253,8 +253,8 @@ class ProposalLayer(KE.Layer):
         # 保证 boxes 区域都在原图内
         window = np.array([0, 0, 1, 1], dtype=np.float32)
         boxes = utils.batch_slice(
-            [boxes, window],
-            lambda x, y: clip_boxes_graph(x, y),
+            boxes,
+            lambda x: clip_boxes_graph(x, window),
             self.config.IMAGES_PER_GPU,
             names=["refined_anchors_clipped"]
         )
@@ -338,7 +338,7 @@ class PyramidROIAlign(KE.Layer):
             ix = tf.where(tf.equal(roi_level, level))
             # 获取到这些 rois, 注意带有 batch 维度
             # [N, featurex_boxes_num, 4]
-            level_boxes = tf.gather(boxes, ix)
+            level_boxes = tf.gather_nd(boxes, ix)
 
             box_indices = tf.cast(ix[:, 0], tf.int32)
             # 将对应 rois 的位置坐标缓存起来，ix 是个数组
@@ -391,6 +391,10 @@ class PyramidROIAlign(KE.Layer):
         return pooled
 
 
+    def compute_output_shape(self, input_shape):
+        return input_shape[0][:2] + self.pool_shape + (input_shape[2][-1], )
+
+
 ############################################################
 #  Detection Target Layer
 ############################################################
@@ -424,7 +428,7 @@ def overlaps_graph(boxes1, boxes2):
 def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     asserts = [tf.Assert(tf.greater(tf.shape(proposals)[0], 0), [proposals], name="roi_assertion")]
     
-    with tf.control_dependencies([asserts]):
+    with tf.control_dependencies(asserts):
         proposals = tf.identity(proposals)
 
     # 去掉坐标为 0 的 proposals
@@ -551,9 +555,9 @@ class DetectionTargetLayer(KE.Layer):
         self.config = config
 
     
-    def call(self, input):
+    def call(self, inputs):
         # [N, proposal_count, 4]
-        proposals = input[0]
+        proposals = inputs[0]
         # [N, 100]
         gt_class_ids = inputs[1]
         # [N, 100, 4]
@@ -599,12 +603,12 @@ def rpn_graph(feature_map, anchors_per_location, anchor_stride):
     x = KL.Conv2D(2 * anchors_per_location, kernel_size=(1, 1), padding='valid', activation='linear', name='rpn_class_raw')(shared)
 
     # [N, V, 2]  V 是该特征图里 anchor 的数量
-    rpn_class_logits = KL.Lambda(lambda t: tf.reshape(t, [t.shape[0], -1, 2]))(x)
+    rpn_class_logits = KL.Lambda(lambda t: tf.reshape(t, [tf.shape(t)[0], -1, 2]))(x)
     # [N, V, 2] 
     rpn_probs = KL.Activation("softmax", name="rpn_class_xxx")(rpn_class_logits)
 
     # [N, height, width, 4 * anchors_per_location]
-    x = KL.Conv2D(anchors_per_location * 4, kernel_size=(1, 1), padding="valid", activation='linear', name='rpn_bbox_pred')
+    x = KL.Conv2D(anchors_per_location * 4, kernel_size=(1, 1), padding="valid", activation='linear', name='rpn_bbox_pred')(shared)
     # [N, V, 4]
     rpn_bbox = KL.Lambda(lambda t: tf.reshape(t, [tf.shape(t)[0], -1, 4]))(x)
 
@@ -642,7 +646,7 @@ def fpn_classifier_graph(rois, feature_maps, image_meta, pool_size, num_classes,
     # [N, 200, 1, 1, 1024]
     x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (pool_size, pool_size), padding="valid"), name="mrcnn_class_conv1")(x)
     x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
-    x = kL.Activation("relu")(x)
+    x = KL.Activation("relu")(x)
     # [N, 200, 1, 1, 1024]
     x = KL.TimeDistributed(KL.Conv2D(fc_layers_size, (1, 1)), name="mrcnn_class_conv2")(x)
     x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn2')(x, training=train_bn)
@@ -674,7 +678,7 @@ def fpn_classifier_graph(rois, feature_maps, image_meta, pool_size, num_classes,
 def build_fpn_mask_graph(rois, feature_maps, image_meta, pool_size, num_classes, train_bn=True):
     # ROIAlign 层，将所有 rois 统一为 14 * 14 大小
     # x => [N, 200, 14, 14, 256]
-    x = PyramidROIAlign([pool_size, pool_size], name="roi_align_classifier")([rois, image_meta] + feature_maps)
+    x = PyramidROIAlign([pool_size, pool_size], name="roi_align_mask")([rois, image_meta] + feature_maps)
 
     # 一系列的卷积层, 保持滑动窗口大小均为 (3, 3), 不会改变大小
     x = KL.TimeDistributed(KL.Conv2D(256, (3, 3), padding="same"), name="mrcnn_mask_conv1")(x)
@@ -715,7 +719,7 @@ def build_fpn_mask_graph(rois, feature_maps, image_meta, pool_size, num_classes,
 # y_pred => [num, 4]
 def smooth_l1_loss(y_true, y_pred):
     diff = K.abs(y_true - y_pred)
-    less_than_one = k.cast(K.less(diff, 1.0), "float32")
+    less_than_one = K.cast(K.less(diff, 1.0), "float32")
     loss = (less_than_one * 0.5 * diff ** 2) + (1 - less_than_one) * (diff - 0.5)
     
     return loss
@@ -753,7 +757,7 @@ def rpn_class_loss_graph(rpn_match, rpn_class_logits):
 # target_bbox => [N, 256, 4]
 # rpn_match => [N, 261888, 1]
 # rpn_bbox => [N, 261888, 4]
-def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox)
+def rpn_bbox_loss_graph(config, target_bbox, rpn_match, rpn_bbox):
     rpn_match = K.squeeze(rpn_match, -1)
     indices = tf.where(K.equal(rpn_match, 1))
     # 注意只有 正anchors 会进入损失计算, [N * 正面数量, 4]
@@ -825,7 +829,6 @@ def mrcnn_bbox_loss_graph(target_bbox, target_class_ids, pred_bbox):
         tf.size(target_bbox) > 0,
         smooth_l1_loss(y_true=target_bbox, y_pred=pred_bbox),
         tf.constant(0.0))
-    )
 
     # K.mean 是将所有数字加起来, 然后除以它们的个数
     loss = K.mean(loss)
@@ -864,7 +867,6 @@ def mrcnn_mask_loss_graph(target_masks, target_class_ids, pred_masks):
         tf.size(y_true) > 0,
         K.binary_crossentropy(target=y_true, output=y_pred),
         tf.constant(0.0))
-    )
 
     loss = K.mean(loss)
 
@@ -1183,6 +1185,7 @@ class MaskRCNN():
         self.config = config
         self.model_dir = model_dir
         self.set_log_dir()
+        self.keras_model = self.build(mode=mode, config=config)
 
     
     def build(self, mode, config):
@@ -1197,7 +1200,7 @@ class MaskRCNN():
             )
         
         # 本次处理的图片 [N, height, width, 3]
-        input_image = KL.input(shape=[None, None, config.IMAGE_SHAPE[2]], name="input_image")
+        input_image = KL.Input(shape=[None, None, config.IMAGE_SHAPE[2]], name="input_image")
         # 图片缩放的信息，与数据集所有的类别 [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
         input_image_meta = KL.Input(shape=[config.IMAGE_META_SIZE], name="input_image_meta")
 
@@ -1327,15 +1330,14 @@ class MaskRCNN():
         rpn_class_logits, rpn_class, rpn_bbox = outputs
 
         # 找推荐框时 non-maximum suppression之后保留多少 ROIs
-        proposal_count = config.POST_NMS_ROIS_TRAINING if mode == "training"\
-            else config.POST_NMS_ROIS_INFERENCE
+        proposal_count = config.POST_NMS_ROIS_TRAINING if mode == "training" else config.POST_NMS_ROIS_INFERENCE
         # 获得初步的推荐框
         # rpn_rois => [N, proposal_count, 4]
         rpn_rois = ProposalLayer(
             proposal_count=proposal_count,
             nms_threshold=config.RPN_NMS_THRESHOLD,
             name="ROI",
-            config=config)([rpn_class, rpn_bbox, anchors]
+            config=config
         )([rpn_class, rpn_bbox, anchors])
 
         if mode == 'training':
@@ -1427,7 +1429,125 @@ class MaskRCNN():
             
 
     def load_weights(self, filepath, by_name=False, exclude=None):
+        import h5py
         
+        try:
+            from keras.engine import saving
+        except ImportError:
+            # Keras before 2.2 used the 'topology' namespace.
+            from keras.engine import topology as saving
+
+        if exclude:
+            by_name = True
+
+        if h5py is None:
+            raise ImportError('`load_weights` requires h5py.')
+        f = h5py.File(filepath, mode='r')
+        if 'layer_names' not in f.attrs and 'model_weights' in f:
+            f = f['model_weights']
+
+        layers = keras_model.inner_model.layers if hasattr(keras_model, "inner_model") else keras_model.layers
+
+        # Exclude some layers
+        if exclude:
+            layers = filter(lambda l: l.name not in exclude, layers)
+
+        if by_name:
+            saving.load_weights_from_hdf5_group_by_name(f, layers)
+        else:
+            saving.load_weights_from_hdf5_group(f, layers)
+        if hasattr(f, 'close'):
+            f.close()
+
+        # Update the log directory
+        self.set_log_dir(filepath)
+
+    
+    def compile(self, learning_rate, momentum):
+        """Gets the model ready for training. Adds losses, regularization, and
+        metrics. Then calls the Keras compile() function.
+        """
+        # Optimizer object
+        optimizer = keras.optimizers.SGD(
+            lr=learning_rate, momentum=momentum,
+            clipnorm=self.config.GRADIENT_CLIP_NORM)
+        # Add Losses
+        # First, clear previously set losses to avoid duplication
+        self.keras_model._losses = []
+        self.keras_model._per_input_losses = {}
+        loss_names = [
+            "rpn_class_loss",  "rpn_bbox_loss",
+            "mrcnn_class_loss", "mrcnn_bbox_loss", "mrcnn_mask_loss"]
+        for name in loss_names:
+            layer = self.keras_model.get_layer(name)
+            if layer.output in self.keras_model.losses:
+                continue
+            loss = (
+                tf.reduce_mean(layer.output, keepdims=True)
+                * self.config.LOSS_WEIGHTS.get(name, 1.))
+            self.keras_model.add_loss(loss)
+
+        # Add L2 Regularization
+        # Skip gamma and beta weights of batch normalization layers.
+        reg_losses = [
+            keras.regularizers.l2(self.config.WEIGHT_DECAY)(w) / tf.cast(tf.size(w), tf.float32)
+            for w in self.keras_model.trainable_weights
+            if 'gamma' not in w.name and 'beta' not in w.name]
+        self.keras_model.add_loss(tf.add_n(reg_losses))
+
+        # Compile
+        self.keras_model.compile(
+            optimizer=optimizer,
+            loss=[None] * len(self.keras_model.outputs))
+
+        # Add metrics for losses
+        for name in loss_names:
+            if name in self.keras_model.metrics_names:
+                continue
+            layer = self.keras_model.get_layer(name)
+            self.keras_model.metrics_names.append(name)
+            loss = (
+                tf.reduce_mean(layer.output, keepdims=True)
+                * self.config.LOSS_WEIGHTS.get(name, 1.))
+            self.keras_model.metrics_tensors.append(loss)
+
+    
+    def set_trainable(self, layer_regex, keras_model=None, indent=0, verbose=1):
+        """Sets model layers as trainable if their names match
+        the given regular expression.
+        """
+        # Print message on the first call (but not on recursive calls)
+        if verbose > 0 and keras_model is None:
+            log("Selecting layers to train")
+
+        keras_model = keras_model or self.keras_model
+
+        # In multi-GPU training, we wrap the model. Get layers
+        # of the inner model because they have the weights.
+        layers = keras_model.inner_model.layers if hasattr(keras_model, "inner_model")\
+            else keras_model.layers
+
+        for layer in layers:
+            # Is the layer a model?
+            if layer.__class__.__name__ == 'Model':
+                print("In model: ", layer.name)
+                self.set_trainable(
+                    layer_regex, keras_model=layer, indent=indent + 4)
+                continue
+
+            if not layer.weights:
+                continue
+            # Is it trainable?
+            trainable = bool(re.fullmatch(layer_regex, layer.name))
+            # Update layer. If layer is a container, update inner layer.
+            if layer.__class__.__name__ == 'TimeDistributed':
+                layer.layer.trainable = trainable
+            else:
+                layer.trainable = trainable
+            # Print trainable layer names
+            if trainable and verbose > 0:
+                log("{}{:20}   ({})".format(" " * indent, layer.name,
+                                            layer.__class__.__name__))
 
 
     # 初始化保存模型的路径，并且如果指定了 model_path，那么尝试从文件名中还原 epoch 步数
@@ -1462,6 +1582,19 @@ class MaskRCNN():
         assert self.mode == "training", "Create model in training mode."
 
         # Pre-defined layer regular expressions
+        layer_regex = {
+            # all layers but the backbone
+            "heads": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            # From a specific Resnet stage and up
+            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "5+": r"(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            # All layers
+            "all": ".*",
+        }
+
+        if layers in layer_regex.keys():
+            layers = layer_regex[layer_regex]
 
         # 
         train_generator = data_generator(
@@ -1475,6 +1608,49 @@ class MaskRCNN():
             batch_size=self.config.BATCH_SIZE
         )
 
+        if not os.path.exists(self.log_dir):
+            os.makedirs(self.log_dir)
+
+        # Callbacks
+        callbacks = [
+            keras.callbacks.TensorBoard(log_dir=self.log_dir,
+                                        histogram_freq=0, write_graph=True, write_images=False),
+            keras.callbacks.ModelCheckpoint(self.checkpoint_path,
+                                            verbose=0, save_weights_only=True),
+        ]
+
+        if custom_callbacks:
+            callbacks += custom_callbacks
+
+        # Train
+        log("\nStarting at epoch {}. LR={}\n".format(self.epoch, learning_rate))
+        log("Checkpoint Path: {}".format(self.checkpoint_path))
+
+        self.set_trainable(layers)
+        self.compile(learning_rate, self.config.LEARNING_MOMENTUM)
+
+        # Work-around for Windows: Keras fails on Windows when using
+        # multiprocessing workers. See discussion here:
+        # https://github.com/matterport/Mask_RCNN/issues/13#issuecomment-353124009
+        if os.name is 'nt':
+            workers = 0
+        else:
+            workers = multiprocessing.cpu_count()
+
+        self.keras_model.fit_generator(
+            train_generator,
+            initial_epoch=self.epoch,
+            epochs=epochs,
+            steps_per_epoch=self.config.STEPS_PER_EPOCH,
+            callbacks=callbacks,
+            validation_data=val_generator,
+            validation_steps=self.config.VALIDATION_STEPS,
+            max_queue_size=100,
+            workers=workers,
+            use_multiprocessing=True,
+        )
+        self.epoch = max(self.epoch, epochs)
+
     
     # 作用是生成 5 个特征图的所有坐标归一化后的 anchors
     def get_anchors(self, image_shape):
@@ -1484,7 +1660,7 @@ class MaskRCNN():
             # 存储着每种原图大小(1024, 1024)对应的所有 anchors
             self._anchor_cache = {}
         # 生成一次即可，会缓存起来
-        if not tuple(config.IMAGE_SHAPE) in self._anchor_cache:
+        if not tuple(image_shape) in self._anchor_cache:
             # 生成五个特征图的所有 anchors，大小位置相对于原图
             # 对于 1024 * 1024 的原图, a => [261888 , 4]
             a = utils.generate_pyramid_anchors(
@@ -1570,7 +1746,7 @@ def batch_pack_graph(x, counts, num_rows):
 # boxes => [N, num, 4]
 # shape => 原图大小 [1024, 1024]
 def norm_boxes_graph(boxes, shape):
-    h, w = tf.split(tf.cast(shape, tf.float32), axis=-1)
+    h, w = tf.split(tf.cast(shape, tf.float32), 2)
     scale = tf.concat([h, w, h, w], axis=-1) - tf.constant(1.0)
     shift = tf.constant([0., 0., 1., 1.])
     return tf.divide(boxes - shift, scale)

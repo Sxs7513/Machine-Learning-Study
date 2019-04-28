@@ -4,9 +4,9 @@ import time
 import numpy as np
 import imgaug
 
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval
-from pycocotools import mask as maskUtils
+# from pycocotools.coco import COCO
+# from pycocotools.cocoeval import COCOeval
+# from pycocotools import mask as maskUtils
 
 import zipfile
 import urllib.request
@@ -14,13 +14,14 @@ import shutil
 
 ROOT_DIR = os.path.abspath("../../")
 
-sys.path.append(ROOT_DIR)  
+sys.path.append(ROOT_DIR)
 from mrcnn.config import Config
-# 代表引入 mrcnn 文件夹下面 model 和 utils 两个模块
+# # 代表引入 mrcnn 文件夹下面 model 和 utils 两个模块
 from mrcnn import model as modellib, utils
 
-# Path to trained weights file
-# COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
+# # Path to trained weights file
+pre_weight_dir = '../../../train_data/pre_train_model'
+COCO_MODEL_PATH = os.path.join(pre_weight_dir, "mask_rcnn_coco.h5")
 
 # Directory to save logs and model checkpoints, if not provided
 # through the command line argument --logs
@@ -176,6 +177,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--model', required=False,
+        default="coco",
         metavar="/path/to/weights.h5",
         help="Path to weights .h5 file or 'coco'"
     )
@@ -226,7 +228,23 @@ if __name__ == '__main__':
         model = modellib.MaskRCNN(mode="inference", config=config,
                                   model_dir=args.logs)
 
+    # print([l.name for l in model.keras_model.layers])
+
     # 加载预训练模型
+    if args.model.lower() == "coco":
+        model_path = COCO_MODEL_PATH
+    elif args.model.lower() == "last":
+        # Find last trained weights
+        model_path = model.find_last()
+    elif args.model.lower() == "imagenet":
+        # Start from ImageNet trained weights
+        model_path = model.get_imagenet_weights()
+    else:
+        model_path = args.model
+
+    # Load weights
+    print("Loading weights ", model_path)
+    model.load_weights(model_path, by_name=True)
 
     # Train or evaluate
     if args.command == 'train':
@@ -244,5 +262,33 @@ if __name__ == '__main__':
 
         augmentation = imgaug.augmenters.Fliplr(0.5)
 
-        # Training - Stage 1
-        print("Training network heads")
+        # 训练网络头部，这个没有必要在这里进行，直接使用预训练模型即可
+        # print("Training network heads")
+        # model.train(
+        #     dataset_train, dataset_val,
+        #     learning_rate=config.LEARNING_RATE,
+        #     epochs=40,
+        #     layers='heads',
+        #     augmentation=augmentation
+        # )
+
+        print("Fine tune Resnet stage 4 and up")
+        model.train(
+            dataset_train, dataset_val,
+            learning_rate=config.LEARNING_RATE,
+            epochs=120,
+            layers='4+',
+            augmentation=augmentation
+        )
+    
+    elif args.command == "evaluate":
+        # Validation dataset
+        dataset_val = CocoDataset()
+        val_type = "val" if args.year in '2017' else "minival"
+        coco = dataset_val.load_coco(args.dataset, val_type, year=args.year, return_coco=True, auto_download=args.download)
+        dataset_val.prepare()
+        print("Running COCO evaluation on {} images.".format(args.limit))
+        evaluate_coco(model, dataset_val, coco, "bbox", limit=int(args.limit))
+    else:
+        print("'{}' is not recognized. "
+              "Use 'train' or 'evaluate'".format(args.command))
