@@ -4,13 +4,13 @@ import time
 import numpy as np
 import imgaug
 
-# from pycocotools.coco import COCO
-# from pycocotools.cocoeval import COCOeval
-# from pycocotools import mask as maskUtils
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+from pycocotools import mask as maskUtils
 
 import zipfile
 import urllib.request
-import shutil
+import shutil 
 
 ROOT_DIR = os.path.abspath("../../")
 
@@ -57,7 +57,7 @@ class CocoDataset(utils.Dataset):
         coco = COCO("{}/annotations_trainval2017/annotations/instances_{}{}.json".format(dataset_dir, subset, year))
         if subset == 'minival' or subset == 'valminusminival':
             subset = 'val'
-        image_dir = "{}/{}{}".format(dataset_dir, subset, year)
+        image_dir = "{}/{}{}/{}{}".format(dataset_dir, subset, year, subset, year)
 
         # 如果没有指定某个类别, 那么获取全部的类别数据
         if not class_ids:
@@ -165,7 +165,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--dataset', 
         required=False,
-        default=os.path.join(os.path.dirname(__file__), '../../../train_data/COCO/'),
+        default=os.path.join(os.path.dirname(__file__), '../../../train_data/COCO'),
         metavar="/path/to/coco/",
         help='Directory of the MS-COCO dataset'
     )
