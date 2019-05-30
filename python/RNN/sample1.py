@@ -30,26 +30,30 @@ def lossFun(inputs, targets, hprev):
     xs, hs, ys, ps = {}, {}, {}, {}
     hs[-1] = np.copy(hprev)
     loss = 0
-    # forward pass
+    # 前向传播，获得该组字符的下一组预测
     for t in range(len(inputs)):
-        xs[t] = np.zeros((vocab_size, 1))  # encode in 1-of-k representation
+        xs[t] = np.zeros((vocab_size, 1))
+        # 生成该字符的向量
         xs[t][inputs[t]] = 1
-        hs[t] = np.tanh(
-            np.dot(Wxh, xs[t]) + np.dot(Whh, hs[t - 1]) + bh)  # hidden state
-        ys[t] = np.dot(
-            Why, hs[t]) + by  # unnormalized log probabilities for next chars
-        ps[t] = np.exp(ys[t]) / np.sum(np.exp(
-            ys[t]))  # probabilities for next chars
-        loss += -np.log(ps[t][targets[t], 0])  # softmax (cross-entropy loss)
+        # 获得隐藏层的输出(只有一个隐藏层)，并记录它
+        hs[t] = np.tanh(np.dot(Wxh, xs[t]) + np.dot(Whh, hs[t - 1]) + bh)
+        # 输出层的输出
+        ys[t] = np.dot(Why, hs[t]) + by
+        # softmax激活获得最终输出
+        ps[t] = np.exp(ys[t]) / np.sum(np.exp(ys[t]))
+        # cross-entropy loss
+        # 与下一组字符的误差，因为这是预测字符的
+        loss += -np.log(ps[t][targets[t], 0])
     # backward pass: compute gradients going backwards
     dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(
         Why)
     dbh, dby = np.zeros_like(bh), np.zeros_like(by)
     dhnext = np.zeros_like(hs[0])
+    # 
     for t in reversed(range(len(inputs))):
         dy = np.copy(ps[t])
-        dy[targets[
-            t]] -= 1  # backprop into y. see http://cs231n.github.io/neural-networks-case-study/#grad if confused here
+        # backprop into y. see http://cs231n.github.io/neural-networks-case-study/#grad if confused here
+        dy[targets[t]] -= 1
         dWhy += np.dot(dy, hs[t].T)
         dby += dy
         dh = np.dot(Why.T, dy) + dhnext  # backprop into h
@@ -59,8 +63,7 @@ def lossFun(inputs, targets, hprev):
         dWhh += np.dot(dhraw, hs[t - 1].T)
         dhnext = np.dot(Whh.T, dhraw)
     for dparam in [dWxh, dWhh, dWhy, dbh, dby]:
-        np.clip(
-            dparam, -5, 5, out=dparam)  # clip to mitigate exploding gradients
+        np.clip(dparam, -5, 5, out=dparam)  # clip to mitigate exploding gradients
     return loss, dWxh, dWhh, dWhy, dbh, dby, hs[len(inputs) - 1]
 
 
@@ -76,8 +79,10 @@ def sample(h, seed_ix, n):
         h = np.tanh(np.dot(Wxh, x) + np.dot(Whh, h) + bh)
         y = np.dot(Why, h) + by
         p = np.exp(y) / np.sum(np.exp(y))
+        # 利用 random 结合 softmax 得到的概率来预测下一个是什么字符
         ix = np.random.choice(range(vocab_size), p=p.ravel())
         x = np.zeros((vocab_size, 1))
+        # 需要不断的记录上一个已经预测完的字符
         x[ix] = 1
         ixes.append(ix)
     return ixes
