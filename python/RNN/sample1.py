@@ -35,7 +35,7 @@ def lossFun(inputs, targets, hprev):
         xs[t] = np.zeros((vocab_size, 1))
         # 生成该字符的向量
         xs[t][inputs[t]] = 1
-        # 获得隐藏层的输出(只有一个隐藏层)，并记录它
+        # 获得隐藏层的输出 h (只有一个隐藏层)，并记录它
         hs[t] = np.tanh(np.dot(Wxh, xs[t]) + np.dot(Whh, hs[t - 1]) + bh)
         # 输出层的输出
         ys[t] = np.dot(Why, hs[t]) + by
@@ -45,25 +45,41 @@ def lossFun(inputs, targets, hprev):
         # 与下一组字符的误差，因为这是预测字符的
         loss += -np.log(ps[t][targets[t], 0])
     # backward pass: compute gradients going backwards
-    dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(
-        Why)
+    dWxh, dWhh, dWhy = np.zeros_like(Wxh), np.zeros_like(Whh), np.zeros_like(Why)
     dbh, dby = np.zeros_like(bh), np.zeros_like(by)
     dhnext = np.zeros_like(hs[0])
-    # 
+    #   Here is a diagram of what's happening. Useful to understand backprop too.
+    #
+    #                  [b_h]                                              [b_y]
+    #                    v                                                  v
+    #   x -> [W_xh] -> [sum] -> h_raw -> [nonlinearity] -> h -> [W_hy] -> [sum] -> y ... -> [e] -> p
+    #                    ^                                 |
+    #                    '----h_next------[W_hh]-----------'
+    # https://manutdzou.github.io/2016/07/11/RNN-backpropagation.html
     for t in reversed(range(len(inputs))):
+        # softmax 的输出
         dy = np.copy(ps[t])
-        # backprop into y. see http://cs231n.github.io/neural-networks-case-study/#grad if confused here
+        # softmax 输出对输入(输出层输出)的求导
         dy[targets[t]] -= 1
+        # 误差对 Why 的导数
         dWhy += np.dot(dy, hs[t].T)
+        # 对 by 的导数
         dby += dy
-        dh = np.dot(Why.T, dy) + dhnext  # backprop into h
-        dhraw = (1 - hs[t] * hs[t]) * dh  # backprop through tanh nonlinearity
+        # 误差对隐藏层输出的导数, 需要把 t+1 时刻的误差反向传播到 t 时刻的误差
+        dh = np.dot(Why.T, dy) + dhnext
+        # 误差对隐藏层输入的导数，即tanh求导
+        dhraw = (1 - hs[t] * hs[t]) * dh
+        # 对 bh 的导数
         dbh += dhraw
+        # 下面是对俩权重矩阵的导数
         dWxh += np.dot(dhraw, xs[t].T)
         dWhh += np.dot(dhraw, hs[t - 1].T)
+        # 计算对于下一时刻的隐藏层的导数, 注意因为这里是反着来的
+        # 所以下一时刻实际上等于前向传播的上一时刻
         dhnext = np.dot(Whh.T, dhraw)
     for dparam in [dWxh, dWhh, dWhy, dbh, dby]:
-        np.clip(dparam, -5, 5, out=dparam)  # clip to mitigate exploding gradients
+        # clip to mitigate exploding gradients
+        np.clip(dparam, -5, 5, out=dparam)
     return loss, dWxh, dWhh, dWhy, dbh, dby, hs[len(inputs) - 1]
 
 
