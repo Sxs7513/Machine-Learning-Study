@@ -1,3 +1,5 @@
+# simple RNN
+
 import numpy as np
 
 # data I/O
