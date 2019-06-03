@@ -136,7 +136,7 @@ class LstmNode:
         self.param.bg_diff += dg_input       
 
         # compute bottom diff
-        # 
+        # 误差对该 cell 最终输出的导数
         dxc = np.zeros_like(self.xc)
         dxc += np.dot(self.param.wi.T, di_input)
         dxc += np.dot(self.param.wf.T, df_input)
