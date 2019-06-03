@@ -65,15 +65,17 @@ class TextDataset(object):
         with open(text_path, 'r') as f:
             text = f.read()
         text = text.replace('\n', ' ').replace('\r', ' ').replace('，', ' ').replace('。', ' ')
+        # 计算 len_seq
         num_seq = int(len(text) / n_step)
         self.num_seq = num_seq
         self.n_step = n_step
-        # Clip more than maximum length.
+        # 多余的不要了
         text = text[:num_seq * n_step]
         arr = arr_to_idx(text)
         arr = arr.reshape((num_seq, -1))
         self.arr = torch.from_numpy(arr)
 
+    # 每次iter获取几个 seq 的数据
     def __getitem__(self, item):
         x = self.arr[item, :]
         y = torch.zeros(x.shape)

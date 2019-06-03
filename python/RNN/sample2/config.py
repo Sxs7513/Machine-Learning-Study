@@ -7,7 +7,7 @@ class DefaultConfig(object):
 
     # Dataset.
     txt = './dataset/jaychou_lyrics.txt'
-    len = 20
+    len = 200
     max_vocab = 8000
     begin = '天青色等烟雨'  # begin word of text
     predict_len = 50  # predict length

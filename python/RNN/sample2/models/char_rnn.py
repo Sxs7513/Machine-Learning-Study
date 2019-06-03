@@ -28,3 +28,13 @@ class CharRNN(nn.Module):
                 hs = hs.cuda()
         # [batch_size, seq_len, embed_dim]
         word_embed = self.word_to_vec(x)
+        # [seq_len, batch_size, embed_dim]
+        word_embed = word_embed.permute(1, 0, 2)
+        # out => [seq_len, batch_size, hidden_size]
+        out, h0 = self.rnn(word_embed, hs)
+        le, mb, hd = out.shape
+        out = out.view(le * mb, hd)
+        out = self.project(out)
+        out = out.view(le, mb, -1)
+        out = out.permute(1, 0, 2).contiguous()  # (batch, len, hidden)
+        return out.view(-1, out.shape[2]), h0
