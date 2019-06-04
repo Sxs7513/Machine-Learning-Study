@@ -95,6 +95,7 @@ class LstmNode:
         # 把当前数据和之前的数据合并来方便计算
         xc = np.hstack((x,  h_prev))
         # i g 状态
+        # shape => [100, 150] dot [150, ] = [100, ]
         self.state.g = np.tanh(np.dot(self.param.wg, xc) + self.param.bg)
         self.state.i = sigmoid(np.dot(self.param.wi, xc) + self.param.bi)
         # 遗忘门输出
@@ -104,6 +105,7 @@ class LstmNode:
         # cell 状态输出
         self.state.s = self.state.g * self.state.i + s_prev * self.state.f
         # cell 的最终输出
+        # shape => [100, ]
         self.state.h = self.state.s * self.state.o
         
         self.xc = xc
@@ -147,6 +149,7 @@ class LstmNode:
         # 对下一个时间序列的 state 的导数，即前向传播中上一个 state 的导数
         self.state.bottom_diff_s = ds * self.state.f
         # 同理
+        # shape => [100, ]
         self.state.bottom_diff_h = dxc[self.param.x_dim:]
 
 class LstmNetwork():
