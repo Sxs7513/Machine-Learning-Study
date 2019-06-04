@@ -81,27 +81,34 @@ class DataGenerator():
 class Model():
     def __init__(self, args, data):
         with tf.name_scope('inputs'):
+            # shape => [batch_size, seq_length]
             self.input_data = tf.placeholder(tf.int32, [args.batch_size, args.seq_length])
             self.target_data = tf.placeholder(tf.int32, [args.batch_size, args.seq_length])
 
         with tf.name_scope('model'):
-            # https://www.zhihu.com/question/52250059
+            # https://zhuanlan.zhihu.com/p/28196873
             # 
             self.cell = rnn_cell.BasicLSTMCell(args.state_size)
             self.cell = rnn_cell.MultiRNNCell([self.cell] * args.num_layers)
             # 创建一个全0的初始状态
+            # shape => [num_layers * batch_size * state_size]
             self.initial_state = self.cell.zero_state(args.batch_size, tf.float32)
+            
             with tf.variable_scope('rnnlm'):
+                # 作用是将 cell 的输出缩放成 vocab_size 大小
                 w = tf.get_variable('softmax_w', [args.state_size, data.vocab_size])
                 b = tf.get_variable('softmax_b', [data.vocab_size])
                 with tf.device("/cpu:0"):
                     # 所有的词向量
                     embedding = tf.get_variable("embedding", [data.vocab_size, args.state_size])
                     # https://www.zhihu.com/question/52250059
+                    # https://www.zhihu.com/question/62914200
+                    # 未训练好的词嵌入层，会被一块训练
                     # shape => [batch_size, seq_length，state_size] => [32 20 100]
                     inputs = tf.nn.embedding_lookup(embedding, self.input_data)
             # https://zhuanlan.zhihu.com/p/28196873
             # outputs => [batch_size, seq_length，state_size]
+            # last_state => [num_layers, 2, batch_size, state_size]
             outputs, last_state = tf.nn.dynamic_rnn(self.cell, inputs, initial_state=self.initial_state)
 
         with tf.name_scope("loss"):
@@ -111,6 +118,8 @@ class Model():
             # 重新转换成 vocab_size 的大小
             # shape => [batch_size * seq_length, vocab_size]
             self.logits = tf.matmul(output, w) + b
+            # 利用 softmax 求得预测的文本
+            # shape => [batch_size * seq_length, vocab_size]
             self.probs = tf.nn.softmax(self.logits)
             self.last_state = last_state
 
@@ -123,6 +132,7 @@ class Model():
                 [targets],
                 [tf.ones_like(targets, dtype=tf.float32)]
             )
+            # 计算 batch 的平均损失
             self.cost = tf.reduce_sum(loss) / args.batch_size
             tf.summary.scalar('loss', self.cost)
 

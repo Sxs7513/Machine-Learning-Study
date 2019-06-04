@@ -37,3 +37,5 @@ python/YOLO_v3/data/train_data/quick_train_data/tfrecords/quick_train_data.tfrec
 python/YOLO_v3/data/train_data/quick_train_data/tfrecords/quick_val_data.tfrecords
 
 python/Mask_RCNN-master
+
+python/RNN/char_rnn/logs
