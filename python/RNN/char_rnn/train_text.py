@@ -103,6 +103,7 @@ class Model():
                     embedding = tf.get_variable("embedding", [data.vocab_size, args.state_size])
                     # https://www.zhihu.com/question/52250059
                     # https://www.zhihu.com/question/62914200
+                    # https://github.com/erhwenkuo/deep-learning-with-keras-notebooks/blob/master/8.2-word2vec-concept-introduction.ipynb
                     # 未训练好的词嵌入层，会被一块训练
                     # shape => [batch_size, seq_length，state_size] => [32 20 100]
                     inputs = tf.nn.embedding_lookup(embedding, self.input_data)

@@ -182,14 +182,17 @@ class ReduceSum(Operation):
     def compute_gradient(self, grad=None):
         input_value = self.input_nodes[0].output_value
 
+        # 大部分时候都会进入这里,将对该层输出的梯度形状改为与输入一致
+        # 不需要其他任何操作. 因为该操作符只是单纯的相加, 对输入的梯度都是 1
         if grad is None:
             grad = np.ones_like(self.output_value)
 
-        # 将对该层输出的梯度形状改为与输入一致，不需要其他任何操作
-        # 因为该操作符只是单纯的相加, 对输入的梯度都是 1
         output_shape = np.array(np.shape(input_value))
         output_shape[self.axis] = 1.0
         tile_scaling = np.shape(input_value) // output_shape
+        # 将传来的梯度 reshape 到和输入一样的 shape, 这里的代码其实是不严谨的
+        # 必须保证 grad 的维度满足某些要求才行, 不过幸好该操作符一般就是用于 loss 的
+        # 所以 grad 基本都是 None
         grad = np.reshape(grad, output_shape)
         return np.tile(grad, tile_scaling)
 
@@ -350,6 +353,7 @@ def compute_gradients(target_op):
         # 输入节点依次向下计算梯度
         if hasattr(node, 'input_nodes'):
             for input_node in node.input_nodes:
+                # 已经计算过到该 node 的梯度的话就不用再计算了
                 if input_node not in visited:
                     visited.add(input_node)
                     queue.put(input_node)
