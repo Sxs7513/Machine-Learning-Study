@@ -39,3 +39,6 @@ python/YOLO_v3/data/train_data/quick_train_data/tfrecords/quick_val_data.tfrecor
 python/Mask_RCNN-master
 
 python/RNN/char_rnn/logs
+
+python/show-attend-and-tell-master/data
+python/show-attend-and-tell-master/jpg
