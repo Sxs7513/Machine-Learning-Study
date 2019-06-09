@@ -55,6 +55,7 @@ class Vgg19(object):
             elif layer_type == 'pool':
                 h = self._pool(h)
             if layer == 'conv5_3':
+                # 原来是 [N, 14, 14, 512]
                 self.features = tf.reshape(h, [-1, 196, 512])
 
     def build(self):

@@ -82,6 +82,8 @@ def _build_caption_vector(annotations, word_to_idx, max_length=15):
     for i, caption in enumerate(annotations['caption']):
         words = caption.split(" ")
         cap_vec = []
+        # 开头和结尾加上 start && end 标记，在训练的时候这俩标记也会被带上
+        # 所以在图片转换文本的时候只要输入 start 标记，便可以直接循环输出文本
         cap_vec.append(word_to_idx['<START>'])
         for word in words:
             if word in word_to_idx:
