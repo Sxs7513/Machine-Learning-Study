@@ -192,4 +192,9 @@ class CaptioningSolver(object):
         '''
         features = data["features"]
 
-        alphas, betas, sampled_captions
+        alphas, betas, sampled_captions = self.model.build_sampler(max_len=20)
+
+        config = tf.ConfigProto(allow_soft_placement=True)
+        config.gpu_options.allow_growth = True
+        with tf.Session(config=config) as sess:
+            

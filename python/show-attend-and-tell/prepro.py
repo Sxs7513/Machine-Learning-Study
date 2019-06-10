@@ -9,6 +9,7 @@ import pandas as pd
 import hickle
 import os
 import json
+import math
 
 # https://zhuanlan.zhihu.com/p/29393415
 def _process_caption_data(caption_file, image_dir, max_length):
@@ -23,7 +24,7 @@ def _process_caption_data(caption_file, image_dir, max_length):
     for annotation in caption_data["annotations"]:
         image_id = annotation["image_id"]
         # 添加字段 filename 为完整路径
-        annotation["filename"] = os.path.join(image_dir, id_to_filename[image_id])
+        annotation["file_name"] = os.path.join(image_dir, id_to_filename[image_id])
         data += [annotation]
 
     # convert to pandas dataframe (for later visualization or debugging)
@@ -133,7 +134,7 @@ def _build_image_idxs(annotations, id_to_idx):
 
 def main():
     # batch size for extracting feature vectors from vggnet.
-    batch_size = 100
+    batch_size = 20
     # maximum length of caption(number of word). if caption is longer than max_length, deleted.  
     max_length = 15
     # if word occurs less than word_count_threshold in training dataset, the word index is special unknown token.
@@ -145,61 +146,61 @@ def main():
     image_dir = '../train_data/COCO/train2017/train2017/'
 
     # about 80000 images and 400000 captions for train dataset
-    train_dataset = _process_caption_data(
-        caption_file='../train_data/COCO/annotations_trainval2017/annotations/captions_train2017.json',
-        image_dir='../train_data/COCO/train2017/train2017/',
-        max_length=max_length
-    )
+    # train_dataset = _process_caption_data(
+    #     caption_file='../train_data/COCO/annotations_trainval2017/annotations/captions_train2017.json',
+    #     image_dir='../train_data/COCO/train2017/train2017/',
+    #     max_length=max_length
+    # )
 
-    # about 40000 images and 200000 captions
-    val_dataset = _process_caption_data(
-        caption_file='../train_data/COCO/annotations_trainval2017/annotations/captions_val2017.json'
-        image_dir='../train_data/COCO/val2017/val2017/'
-        max_length=max_length
-    )
+    # # about 40000 images and 200000 captions
+    # val_dataset = _process_caption_data(
+    #     caption_file='../train_data/COCO/annotations_trainval2017/annotations/captions_val2017.json',
+    #     image_dir='../train_data/COCO/val2017/val2017/',
+    #     max_length=max_length
+    # )
 
-     # about 4000 images and 20000 captions for val / test dataset
-    val_cutoff = int(0.1 * len(val_dataset))
-    test_cutoff = int(0.2 * len(val_dataset))
-    print ('Finished processing caption data')
+    #  # about 4000 images and 20000 captions for val / test dataset
+    # val_cutoff = int(0.1 * len(val_dataset))
+    # test_cutoff = int(0.2 * len(val_dataset))
+    # print ('Finished processing caption data')
 
-    save_pickle(train_dataset, 'data/train/train.annotations.pkl')
-    save_pickle(val_dataset[:val_cutoff], 'data/val/val.annotations.pkl')
-    save_pickle(val_dataset[val_cutoff:test_cutoff].reset_index(drop=True), 'data/test/test.annotations.pkl')
+    # save_pickle(train_dataset, 'data/train/train.annotations.pkl')
+    # save_pickle(val_dataset[:val_cutoff], 'data/val/val.annotations.pkl')
+    # save_pickle(val_dataset[val_cutoff:test_cutoff].reset_index(drop=True), 'data/test/test.annotations.pkl')
 
-    for split in ["train", "val", "test"]:
-        annotations = load_pickle('./data/%s/%s.annotations.pkl' % (split, split))
-        # 从训练集里面制作词典 (word => idx)
-        if split == 'train':
-            word_to_idx = _build_vocab(annotations=annotations, threshold=word_count_threshold)
-            save_pickle(word_to_idx, './data/%s/word_to_idx.pkl' % split)
+    # for split in ["train", "val", "test"]:
+    #     annotations = load_pickle('./data/%s/%s.annotations.pkl' % (split, split))
+    #     # 从训练集里面制作词典 (word => idx)
+    #     if split == 'train':
+    #         word_to_idx = _build_vocab(annotations=annotations, threshold=word_count_threshold)
+    #         save_pickle(word_to_idx, './data/%s/word_to_idx.pkl' % split)
 
-        # 为每个 caption 创建对应的文本序列
-        captions = _build_caption_vector(annotations=annotations, word_to_idx=word_to_idx, max_length=max_length)
-        save_pickle(captions, './data/%s/%s.captions.pkl' % (split, split))
+    #     # 为每个 caption 创建对应的文本序列
+    #     captions = _build_caption_vector(annotations=annotations, word_to_idx=word_to_idx, max_length=max_length)
+    #     save_pickle(captions, './data/%s/%s.captions.pkl' % (split, split))
 
-        # 收集所有图片的完整路径并存储
-        file_names, id_to_idx = _build_file_names(annotations)
-        save_pickle(file_names, './data/%s/%s.file.names.pkl' % (split, split))
+    #     # 收集所有图片的完整路径并存储
+    #     file_names, id_to_idx = _build_file_names(annotations)
+    #     save_pickle(file_names, './data/%s/%s.file.names.pkl' % (split, split))
 
-        # 一个数组, 里面每个元素是每个 annotation 与其对应的图片的 index
-        # shape => [len(annotations)]
-        image_idxs = _build_image_idxs(annotations, id_to_idx)
-        save_pickle(image_idxs, './data/%s/%s.image.idxs.pkl' % (split, split))
+    #     # 一个数组, 里面每个元素是每个 annotation 与其对应的图片的 index
+    #     # shape => [len(annotations)]
+    #     image_idxs = _build_image_idxs(annotations, id_to_idx)
+    #     save_pickle(image_idxs, './data/%s/%s.image.idxs.pkl' % (split, split))
 
-        # 存储每张图片里面的所有 caption, 用来进行句子相似程度即 bleu 算法检测 
-        # 主要是 val 集合会用到
-        image_ids = {}
-        feature_to_captions = {}
-        i = -1
-        for caption, image_id in zip(annotations['caption'], annotations['image_id']):
-            if not image_id in image_ids:
-                image_ids[image_id] = 0
-                i += 1
-                feature_to_captions[i] = []
-            feature_to_captions[i].append(caption.lower() + ' .')
-        save_pickle(feature_to_captions, './data/%s/%s.references.pkl' % (split, split))
-        print ("Finished building %s caption dataset" % split)
+    #     # 存储每张图片里面的所有 caption, 用来进行句子相似程度即 bleu 算法检测 
+    #     # 主要是 val 集合会用到
+    #     image_ids = {}
+    #     feature_to_captions = {}
+    #     i = -1
+    #     for caption, image_id in zip(annotations['caption'], annotations['image_id']):
+    #         if not image_id in image_ids:
+    #             image_ids[image_id] = 0
+    #             i += 1
+    #             feature_to_captions[i] = []
+    #         feature_to_captions[i].append(caption.lower() + ' .')
+    #     save_pickle(feature_to_captions, './data/%s/%s.references.pkl' % (split, split))
+    #     print ("Finished building %s caption dataset" % split)
 
     # 提取所有图片的 conv5_3 层特征图, 它包含了图像的更多内容信息
     # https://zhuanlan.zhihu.com/p/55948352
@@ -223,21 +224,21 @@ def main():
             for start, end in zip(range(0, n_examples, batch_size), range(batch_size, n_examples + batch_size, batch_size)):
                 image_batch_file = image_path[start:end]
                 image_batch = np.array(
-                    map(
+                    list(map(
                         lambda x: misc.imresize(
                             ndimage.imread(x, mode="RGB"), 
                             (224, 224)
                         ), 
                         image_batch_file
-                    )
+                    ))
                 ).astype(np.float32)
                 feats = sess.run(vggnet.features, feed_dict={vggnet.images: image_batch})
                 all_feats[start:end, :] = feats
                 print ("Processed %d %s features.." % (end, split))
             
-            # use hickle to save huge feature vectors
-            hickle.dump(all_feats, save_path)
-            print ("Saved %s.." % (save_path))
+                # use hickle to save huge feature vectors
+                hickle.dump(all_feats, save_path)
+                print ("Saved %s.." % (save_path))
 
 
 if __name__ == "__main__":
