@@ -127,7 +127,8 @@ class CaptionGenerator(object):
                 ), 
                 [-1, self.L]
             )
-            # 得到特征图每个块的注意力度
+            # 得到特征图每个块的注意力度, 因为所有块的权重是要
+            # 加起来为 1 的，所以使用 softmax
             # [N, 196]
             alpha = tf.nn.softmax(out_att)
             # 最终得到在该次时间序列中的注意力，第二维需要和
@@ -136,6 +137,7 @@ class CaptionGenerator(object):
             # 什么很难用文字表达出来，具体可以看 _decode_lstm
             # [N, 512]
             context = tf.reduce_sum(
+                # 同一块的不同通道共享同一注意力
                 # [N, 196, 512] * [N, 196, 1] = [N, 196, 512]
                 features * tf.expand_dims(alpha, 2), 
                 1, 
@@ -158,7 +160,7 @@ class CaptionGenerator(object):
             context = tf.multiply(beta, context, name='selected_context')
             return context, beta
 
-    # x => 本次的输入，[N, 512]
+    # x => 本次lstm的输入，[N, 512]
     # h => cell在本次的隐藏状态, [N, 1024]
     # context => 注意力上下文, [N, 512]
     def _decode_lstm(self, x, h, context, dropout=False, reuse=False):
@@ -176,9 +178,23 @@ class CaptionGenerator(object):
                 h = tf.nn.dropout(h, 0.5)
             # [N, 512]
             h_logits = tf.matmul(h, w_h) + b_h
-            
 
+            # https://github.com/yunjey/show-attend-and-tell/issues/17
+            if self.ctx2out:
+                # [512, 512]
+                w_ctx2out = tf.get_variable("w_ctx2out", [self.D, self.M], initializer=self.weight_initializer)
+                h_logits += tf.matmul(context, w_ctx2out)
+            if self.prev2out:
+                h_logits += x
 
+            # 使用 tanh 激活, 保证有负的, 来提升loss对于非注意区域的惩罚
+            h_logits = tf.nn.tanh(h_logits)
+
+            if dropout:
+                h_logits = tf.nn.dropout(h_logits, 0.5)
+            # [N, len(word_to_idx)]
+            out_logits = tf.matmul(h_logits, w_out) + b_out
+            return out_logits
 
 
     def _batch_norm(self, x, mode="train", name=None):
@@ -226,12 +242,14 @@ class CaptionGenerator(object):
 
         # 共输出 n_time_step 个词
         for t in range(self.T):
-            # 注意力层
+            # 注意力层，soft机制
             # context => [N, 512]
             # alpha => [N, 196]
             context, alpha = self._attention_layer(features, features_proj, h, reuse=(t!=0))
             alpha_list.append(alpha)
 
+            # https://arxiv.org/pdf/1502.03044v2.pdf 里面的 "4.2.1. DOUBLY STOCHASTIC ATTENTION"
+            # 作者通过实验发现这样可以让注意力更加关注到区域中感兴趣的块
             if self.selector:
                 context, beta = self._selector(context, h, reuse=(t!=0))
 
@@ -239,8 +257,105 @@ class CaptionGenerator(object):
             # 获得 cell 当前的细胞状态和隐藏状态
             with tf.variable_scope('lstm', reuse=(t!=0)):
                 # inputs => [N, 512] concat [N, 512] = [N, 1024]
-                # concat 的原因是对输入信息的各个局部赋予权重
+                # concat 的原因在论文中没有明确指出，大概就是为了将注意力上下文信息带入到
+                # lstm 中吧
+                # https://arxiv.org/pdf/1502.03044v2.pdf “3.1.2. DECODER: LONG SHORT-TERM MEMORY NETWORK”
                 _, (c, h) = lstm_cell(inputs=tf.concat([x[:, t, :], context], 1), state=[c, h])
 
-            # 
+            # decode, [N, len(word_to_idx)]
             logits = self._decode_lstm(x[:,t,:], h, context, dropout=self.dropout, reuse=(t!=0))
+            
+            # 预测的字和真值的损失
+            loss += tf.reduce_sum(
+                tf.nn.sparse_softmax_cross_entropy_with_logits(
+                    # 真值, [N, len(word_to_idx)]
+                    labels=captions_out[:, t],
+                    # 预测值, [N]
+                    logits=logits
+                ) 
+                * 
+                # end 标记符不算在损失内
+                mask[:, t]
+            )
+        
+        # 引入正则项, 让模型关注到特征图中的每一块, 而不只是感兴趣的区块
+        # https://arxiv.org/pdf/1502.03044v2.pdf 里面的 "4.2.1. DOUBLY STOCHASTIC ATTENTION"
+        # https://github.com/yunjey/show-attend-and-tell/issues/15
+        if self.alpha_c > 0:
+            # [N, n_time_step, 196]
+            alphas = tf.transpose(
+                # [n_time_step, N, 196]
+                tf.stack(alpha_list), 
+                (1, 0, 2)
+            )
+            # [N, 196]
+            alphas_all = tf.reduce_sum(alphas, 1)
+            alpha_reg = self.alpha_c * tf.reduce_sum((16./196 - alphas_all) ** 2)
+            loss += alpha_reg
+
+        return loss / tf.to_float(batch_size)
+
+
+    def build_sampler(self, max_len=20):
+        features = self.features
+
+        # batch normalize feature vectors
+        features = self._batch_norm(features, mode='test', name='conv_features')
+
+        c, h = self._get_initial_lstm(features=features)
+        features_proj = self._project_features(features=features)
+
+        sampled_word_list = []
+        alpha_list = []
+        beta_list = []
+        lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=self.H)
+
+        for t in range(max_len):
+            if t == 0:
+                x = self._word_embedding(
+                    # 第一次循环的时候, 手动创建 start 符号
+                    # shape => [N]
+                    inputs=tf.fill([tf.shape(features)[0]], self._start)
+                )
+            else:
+                # 非第一次循环的话, 直接用预测的上个字即可, 符合 rnn 训练模式
+                x = self._word_embedding(inputs=sampled_word, reuse=True)
+
+            context, alpha = self._attention_layer(features, features_proj, h, reuse=(t!=0))
+            alpha_list.append(alpha)
+
+            if self.selector:
+                # beta => [N, 1]
+                context, beta = self._selector(context, h, reuse=(t!=0))
+                # 最终是 [max_len, N, 1]
+                beta_list.append(beta)
+
+            with tf.variable_scope('lstm', reuse=(t!=0)):
+                _, (c, h) = lstm_cell(inputs=tf.concat( [x, context],1), state=[c, h])
+
+            # [N, len(word_to_idx)]
+            logits = self._decode_lstm(x, h, context, reuse=(t!=0))
+            # 选出概率最大的词
+            sampled_word = tf.argmax(logits, 1)
+            # 最终 [max_len, N]
+            sampled_word_list.append(sampled_word)
+
+        # [N, n_time_step, 196]
+        alphas = tf.transpose(
+            # [n_time_step, N, 196]
+            tf.stack(alpha_list), 
+            (1, 0, 2)
+        )
+        # [N, max_len]
+        betas = tf.transpose(
+            # [max_len, N]
+            tf.squeeze(beta_list), 
+            (1, 0)
+        )
+        # [N, max_len]
+        sampled_captions = tf.transpose(
+            # [max_len, N]
+            tf.stack(sampled_word_list), 
+            (1, 0)
+        ) 
+        return alphas, betas, sampled_captions
