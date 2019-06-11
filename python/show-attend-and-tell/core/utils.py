@@ -10,13 +10,16 @@ def load_coco_data(data_path='./data', split='train'):
     start_t = time.time()
     data = {}
 
-    data['features'] = hickle.load(os.path.join(data_path, '%s.features.hkl' %split))
+    if os.path.exists(os.path.join(data_path, '%s.features.hkl' %split)):
+        data['features'] = hickle.load(os.path.join(data_path, '%s.features.hkl' %split))
     with open(os.path.join(data_path, '%s.file.names.pkl' %split), 'rb') as f:
         data['file_names'] = pickle.load(f)   
     with open(os.path.join(data_path, '%s.captions.pkl' %split), 'rb') as f:
         data['captions'] = pickle.load(f)
     with open(os.path.join(data_path, '%s.image.idxs.pkl' %split), 'rb') as f:
         data['image_idxs'] = pickle.load(f)
+    with open(os.path.join(data_path, '%s.image.ids.pkl' % split), 'rb') as f:
+        data['image_ids'] = pickle.load(f)
     
     for k, v in data.iteritems():
         if type(v) == np.ndarray:

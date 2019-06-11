@@ -5,9 +5,11 @@ import numpy as np
 import time
 import os
 import cPickle as pickle
-from scipy import ndimage
+from scipy import ndimage, misc
+
 from utils import *
 from bleu import evaluate
+from core.vggnet import Vgg19
 
 
 class CaptioningSolver(object):
@@ -47,6 +49,9 @@ class CaptioningSolver(object):
         self.model_path = kwargs.pop('model_path', './model/')
         self.pretrained_model = kwargs.pop('pretrained_model', None)
         self.test_model = kwargs.pop('test_model', './model/lstm/model-1')
+        
+        self.image_dir = kwargs.pop('image_dir', '../train_data/COCO/train2017/train2017/')
+        self.vgg_model_path = kwargs.pop('vgg_model_path', './data/imagenet-vgg-verydeep-19.mat')
 
         # set an optimizer by update rule
         if self.update_rule == 'adam':
@@ -61,13 +66,32 @@ class CaptioningSolver(object):
         if not os.path.exists(self.log_path):
             os.makedirs(self.log_path)
 
+        self.vggnet = Vgg19(self.vgg_model_path)
+        self.vggnet.build()
+
+    
+    def get_image_batch(self, image_batch_file):
+        image_batch = np.array(
+            list(map(
+                lambda x: misc.imresize(
+                    ndimage.imread(x, mode="RGB"), 
+                    (224, 224)
+                ), 
+                image_batch_file
+            ))
+        ).astype(np.float32)
+
+        return image_batch
+
 
     def train(self):
-        n_examples = self.data["features"].shape[0]
+        # n_examples = self.data["features"].shape[0]
+        n_examples = self.data["image_ids"].shape[0]
         n_iters_per_epoch = int(np.ceil(float(n_examples) / self.batch_size))
         features = self.data['features']
         captions = self.data['captions']
         image_idxs = self.data['image_idxs']
+        image_ids = self.data["image_ids"]
         val_features = self.val_data['features']
         n_iters_val = int(np.ceil(float(val_features.shape[0]) / self.batch_size))
 
@@ -105,7 +129,7 @@ class CaptioningSolver(object):
         config.gpu_options.allow_growth = True
 
         with tf.Session(config=config) as sess:
-           tf.global_variables_initializer().run()
+            sess.run(tf.global_variables_initializer())
             summary_writer = tf.summary.FileWriter(self.log_path, graph=tf.get_default_graph())
             saver = tf.train.Saver(max_to_keep=40)
 
@@ -121,13 +145,20 @@ class CaptioningSolver(object):
                 # 每个 epoch 都将样本打乱
                 rand_idxs = np.random.permutation(n_examples)
                 captions = captions[rand_idxs]
-                image_idxs = image_idxs[rand_idxs]
+                # image_idxs = image_idxs[rand_idxs]
+                image_ids = image_ids[rand_idxs]
 
                 for i in range(n_iters_per_epoch):
                     captions_batch = captions[i * self.batch_size: (i+1)* self.batch_size]
                     # 不知道 image_idxs 什么意思的话看 prepro.py
-                    image_idxs_batch = image_idxs[i*self.batch_size: (i+1)*self.batch_size]
-                    features_batch = features[image_idxs_batch]
+                    # image_idxs_batch = image_idxs[i*self.batch_size: (i+1)*self.batch_size]
+                    # features_batch = features[image_idxs_batch]
+                    # 训练阶段才生成 feature，无奈之举因为图片太多了
+                    image_ids_batch = image_ids[i*self.batch_size: (i+1)*self.batch_size]
+                    image_batch_file = [os.path.join(self.image_dir, imageId) for imageId in image_ids_batch]
+                    image_batch = self.get_image_batch(image_batch_file)
+                    features_batch = sess.run(self.vggnet.features, feed_dict={vggnet.images: image_batch})
+
                     feed_dict = { self.model.features: features_batch, self.model.captions: captions_batch }
                     _, l = sess.run([train_op, loss], feed_dict)
                     curr_loss += 1
@@ -168,6 +199,7 @@ class CaptioningSolver(object):
                     
                     all_decoded = decode_captions(all_gen_cap, self.model.idx_to_word)
                     save_pickle(all_decoded, "./data/val/val.candidate.captions.pkl")
+                    # https://www.cnblogs.com/by-dream/p/7679284.html
                     scores = evaluate(data_path='./data', split='val', get_scores=True)
                     write_bleu(scores=scores, path=self.model_path, epoch=e)
                 
@@ -190,11 +222,53 @@ class CaptioningSolver(object):
             - attention_visualization: If True, visualize attention weights with images for each sampled word. (ipthon notebook)
             - save_sampled_captions: If True, save sampled captions to pkl file for computing BLEU scores.
         '''
-        features = data["features"]
+        # 直接在网络中生成特征图
+        # features = data["features"]
+        image_batch_file = data['images']
 
         alphas, betas, sampled_captions = self.model.build_sampler(max_len=20)
 
         config = tf.ConfigProto(allow_soft_placement=True)
         config.gpu_options.allow_growth = True
         with tf.Session(config=config) as sess:
-            
+            saver = tf.train.Saver()
+            saver.restore(sess, self.test_model)
+
+            image_batch = self.get_image_batch(image_batch_file)
+            features_batch = sess.run(self.vggnet.features, feed_dict={vggnet.images: image_batch})
+            feed_dict = { self.model.features: features_batch }
+            # alps => 预测的每个字对应的注意力权重 [N, n_time_step, 196]
+            # bts => 论文里面的 β 值 [N, max_len]
+            # sam_cap => 预测结果 [N, max_len]
+            alps, bts, sam_cap = sess.run([alphas, betas, sampled_captions], feed_dict)
+            decoded = decode_captions(sam_cap, self.model.idx_to_word)
+
+            if attention_visualization:
+                for n in range(len(image_batch)):
+                    print ("Sampled Caption: %s" % decoded[n])
+
+                    img = ndimage.imread(image_batch_file[n])
+                    plt.subplot(4, 5, 1)
+                    plt.imshow(img)
+                    plt.axis('off')
+
+                    # 在原图上绘制注意力
+                    words = decoded[n].split(" ")
+                    for t in range(len(words)):
+                        if t > 18:
+                            break
+                        plt.subplot(4, 5, t + 2)
+                        plt.text(0, 1, '%s(%.2f)' % (words[t], bts[n,t]) , color='black', backgroundcolor='white', fontsize=8)
+                        plt.imshow(img)
+                        alp_curr = alps[n, t, :].reshape(14, 14)
+                        # 上采样16倍来和原图一样大小，然后平滑下
+                        alp_img = skimage.transform.pyramid_expand(alp_curr, upscale=16, sigma=20)
+                        plt.imshow(alp_img, alpha=0.85)
+                        plt.axis('off')
+                    plt.show()
+            else:
+                for n in range(len(image_batch)):
+                    plt.subplot(4, 5, 1)
+                    plt.text(0, 1, decoded[n], color='black', backgroundcolor='white', fontsize=8)
+                    plt.imshow(img)
+                    plt.show()

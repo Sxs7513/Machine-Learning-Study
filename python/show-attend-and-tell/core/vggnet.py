@@ -56,7 +56,8 @@ class Vgg19(object):
                 h = self._pool(h)
             if layer == 'conv5_3':
                 # 原来是 [N, 14, 14, 512]
-                self.features = tf.reshape(h, [-1, 196, 512])
+                # 唯独这个层和外界连接，阻止它反向传播
+                self.features = tf.stop_gradient(tf.reshape(h, [-1, 196, 512]))
 
     def build(self):
         self.build_inputs()
