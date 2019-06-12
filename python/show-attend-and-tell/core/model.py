@@ -23,7 +23,7 @@ class CaptionGenerator(object):
         """
 
         self.word_to_idx = word_to_idx
-        self.idx_to_word = {i: w for w, i in word_to_idx.iteritems()}
+        self.idx_to_word = {i: w for w, i in word_to_idx.items()}
         self.prev2out = prev2out
         self.ctx2out = ctx2out
         self.alpha_c = alpha_c
@@ -59,7 +59,7 @@ class CaptionGenerator(object):
             features_mean = tf.reduce_mean(features, 1)
 
             # [512, 1024]
-            w_h = tf.get_variable("w_h", [self.D, self.H], initializer=self.weight_initializer)\
+            w_h = tf.get_variable("w_h", [self.D, self.H], initializer=self.weight_initializer)
             b_h = tf.get_variable('b_h', [self.H], initializer=self.const_initializer)
             # [N, 1024]
             h = tf.nn.tanh(tf.matmul(features_mean, w_h) + b_h)
@@ -238,7 +238,7 @@ class CaptionGenerator(object):
         loss = 0.0
         alpha_list = []
         # 初始化LSTM神经元, 里面隐藏层维度是 1024
-        lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=self.H)
+        lstm_cell = tf.nn.rnn_cell.LSTMCell(num_units=self.H)
 
         # 共输出 n_time_step 个词
         for t in range(self.T):
@@ -308,7 +308,7 @@ class CaptionGenerator(object):
         sampled_word_list = []
         alpha_list = []
         beta_list = []
-        lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(num_units=self.H)
+        lstm_cell = tf.nn.rnn_cell.LSTMCell(num_units=self.H)
 
         for t in range(max_len):
             if t == 0:
@@ -331,7 +331,7 @@ class CaptionGenerator(object):
                 beta_list.append(beta)
 
             with tf.variable_scope('lstm', reuse=(t!=0)):
-                _, (c, h) = lstm_cell(inputs=tf.concat( [x, context],1), state=[c, h])
+                _, (c, h) = lstm_cell(inputs=tf.concat([x, context], 1), state=[c, h])
 
             # [N, len(word_to_idx)]
             logits = self._decode_lstm(x, h, context, reuse=(t!=0))

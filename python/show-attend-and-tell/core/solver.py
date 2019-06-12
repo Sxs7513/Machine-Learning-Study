@@ -4,12 +4,12 @@ import skimage.transform
 import numpy as np
 import time
 import os
-import cPickle as pickle
+import pickle
 from scipy import ndimage, misc
 
-from utils import *
-from bleu import evaluate
-from core.vggnet import Vgg19
+from .utils import *
+from .bleu import evaluate
+from .vggnet import Vgg19
 
 
 class CaptioningSolver(object):
@@ -39,7 +39,7 @@ class CaptioningSolver(object):
         self.data = data
         self.val_data = val_data
         self.n_epochs = kwargs.pop('n_epochs', 10)
-        self.batch_size = kwargs.pop('batch_size', 100)
+        self.batch_size = kwargs.pop('batch_size', 2)
         self.update_rule = kwargs.pop('update_rule', 'adam')
         self.learning_rate = kwargs.pop('learning_rate', 0.01)
         self.print_bleu = kwargs.pop('print_bleu', False)
@@ -66,8 +66,10 @@ class CaptioningSolver(object):
         if not os.path.exists(self.log_path):
             os.makedirs(self.log_path)
 
+        print('start build vggnet')
         self.vggnet = Vgg19(self.vgg_model_path)
         self.vggnet.build()
+        print('build vggnet done')
 
     
     def get_image_batch(self, image_batch_file):
@@ -86,20 +88,25 @@ class CaptioningSolver(object):
 
     def train(self):
         # n_examples = self.data["features"].shape[0]
-        n_examples = self.data["image_ids"].shape[0]
+        self.data["image_ids"] = np.array(self.data["image_ids"])
+        self.val_data["image_ids"] = np.array(self.val_data["image_ids"])
+        n_examples = np.shape(self.data["image_ids"])[0]
         n_iters_per_epoch = int(np.ceil(float(n_examples) / self.batch_size))
-        features = self.data['features']
+        # features = self.data['features']
         captions = self.data['captions']
         image_idxs = self.data['image_idxs']
         image_ids = self.data["image_ids"]
-        val_features = self.val_data['features']
-        n_iters_val = int(np.ceil(float(val_features.shape[0]) / self.batch_size))
+        # val_features = self.val_data['features']
+        # n_iters_val = int(np.ceil(float(val_features.shape[0]) / self.batch_size))
+        n_iters_val = int(np.ceil(float(np.shape(self.val_data["image_ids"])[0]) / self.batch_size))
 
-        loss = self.model.build_model()
         # test 直接复用 train 的参数
-        tf.get_variable_scope().reuse_variables()\
-        _, _, generated_captions = self.model.build_sampler(max_len=20)
+        with tf.variable_scope(tf.get_variable_scope()):
+            loss = self.model.build_model()
+            tf.get_variable_scope().reuse_variables()
+            _, _, generated_captions = self.model.build_sampler(max_len=20)
 
+        # train op
         with tf.variable_scope(tf.get_variable_scope(), reuse=False):
             optimizer = self.optimizer(learning_rate=self.learning_rate)
             grads = tf.gradients(loss, tf.trainable_variables())
@@ -108,13 +115,13 @@ class CaptioningSolver(object):
 
         # summary op
         # tf.scalar_summary('batch_loss', loss)
-        tf.summary.scalar('batch_loss', loss)
-        for var in tf.trainable_variables():
-            #tf.histogram_summary(var.op.name, var)
-            tf.summary.histogram(var.op.name, var)
-        for grad, var in grads_and_vars:
-            #tf.histogram_summary(var.op.name+'/gradient', grad)
-            tf.summary.histogram(var.op.name+'/gradient', grad)
+        # tf.summary.scalar('batch_loss', loss)
+        # for var in tf.trainable_variables():
+        #     #tf.histogram_summary(var.op.name, var)
+        #     tf.summary.histogram(var.op.name, var)
+        # for grad, var in grads_and_vars:
+        #     #tf.histogram_summary(var.op.name+'/gradient', grad)
+        #     tf.summary.histogram(var.op.name+'/gradient', grad)
 
         #summary_op = tf.merge_all_summaries()
         summary_op = tf.summary.merge_all()
@@ -124,8 +131,8 @@ class CaptioningSolver(object):
         print ("Batch size: %d" % self.batch_size)
         print ("Iterations per epoch: %d" % n_iters_per_epoch)
 
-        config = tf.ConfigProto(allow_soft_placement = True)
-        #config.gpu_options.per_process_gpu_memory_fraction=0.9
+        config = tf.ConfigProto(allow_soft_placement=True)
+        config.gpu_options.per_process_gpu_memory_fraction=0.9
         config.gpu_options.allow_growth = True
 
         with tf.Session(config=config) as sess:
@@ -155,10 +162,10 @@ class CaptioningSolver(object):
                     # features_batch = features[image_idxs_batch]
                     # 训练阶段才生成 feature，无奈之举因为图片太多了
                     image_ids_batch = image_ids[i*self.batch_size: (i+1)*self.batch_size]
-                    image_batch_file = [os.path.join(self.image_dir, imageId) for imageId in image_ids_batch]
+                    image_batch_file = [imagePath for imagePath in image_ids_batch]
                     image_batch = self.get_image_batch(image_batch_file)
-                    features_batch = sess.run(self.vggnet.features, feed_dict={vggnet.images: image_batch})
-
+                    features_batch = sess.run(self.vggnet.features, feed_dict={self.vggnet.images: image_batch})
+                
                     feed_dict = { self.model.features: features_batch, self.model.captions: captions_batch }
                     _, l = sess.run([train_op, loss], feed_dict)
                     curr_loss += 1
@@ -168,6 +175,8 @@ class CaptioningSolver(object):
                         summary = sess.run(summary_op, feed_dict)
                         summary_writer.add_summary(summary, e*n_iters_per_epoch + i)
 
+                    print ("\nTrain loss at epoch %d & iteration %d (mini-batch): %.5f" %(e+1, i+1, l))
+                        
                     if (i+1) % self.print_every == 0:
                         print ("\nTrain loss at epoch %d & iteration %d (mini-batch): %.5f" %(e+1, i+1, l))
                         # 对应的 caption 真值

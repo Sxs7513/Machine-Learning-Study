@@ -43,3 +43,5 @@ python/RNN/char_rnn/logs
 python/show-attend-and-tell-master/data
 python/show-attend-and-tell-master/jpg
 python/show-attend-and-tell/data
+python/show-attend-and-tell/pycocoevalcap
+python/show-attend-and-tell/coco-caption

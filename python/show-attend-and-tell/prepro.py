@@ -23,7 +23,7 @@ def _process_caption_data(caption_file, image_dir, max_length):
     data = []
     for annotation in caption_data["annotations"]:
         image_id = annotation["image_id"]
-        # 添加字段 filename 为完整路径
+        # 覆盖 filename 为完整路径
         annotation["file_name"] = os.path.join(image_dir, id_to_filename[image_id])
         data += [annotation]
 
@@ -133,10 +133,12 @@ def _build_image_idxs(annotations, id_to_idx):
 
 
 def _build_images_ids(annotations):
-    image_ids = np.ndarray(len(annotations), dtype=np.int32)
-    image_ids = annotations['image_id']
-    for i, image_id in enumerate(image_ids):
-        image_ids[i] = image_id
+    # image_ids = np.ndarray(len(annotations), dtype=np.int32)
+    image_ids = []
+    image_ids_origin = annotations['file_name']
+    for i, image_id in enumerate(image_ids_origin):
+        # image_ids[i] = image_id
+        image_ids.append(image_id)
     return image_ids
 
 
@@ -197,7 +199,7 @@ def main():
         save_pickle(image_idxs, './data/%s/%s.image.idxs.pkl' % (split, split))
 
         # features 过大，采用备选方案，在训练过程中生成图片特征图
-        image_ids = _build_images_ids(annotation)
+        image_ids = _build_images_ids(annotations)
         save_pickle(image_ids, './data/%s/%s.image.ids.pkl' % (split, split))
 
         # 存储每张图片里面的所有 caption, 用来进行句子相似程度即 bleu 算法检测 
@@ -216,41 +218,41 @@ def main():
 
     # 提取所有图片的 conv5_3 层特征图, 它包含了图像的更多内容信息
     # https://zhuanlan.zhihu.com/p/55948352
-    vggnet = Vgg19(vgg_model_path)
-    vggnet.build()
-    with tf.Session() as sess:
-        tf.initialize_all_variables().run()
-        for split in ['train', 'val', 'test']:
-            anno_path = './data/%s/%s.annotations.pkl' % (split, split)
-            save_path = './data/%s/%s.features.hkl' % (split, split)
-            annotations = load_pickle(anno_path)
-            # 每个图片至少有5个描述语句（有的图片更多）, 避免重复
-            image_path = list(annotations['file_name'].unique())
-            # 有多少张图片
-            n_examples = len(image_path)
+    # vggnet = Vgg19(vgg_model_path)
+    # vggnet.build()
+    # with tf.Session() as sess:
+    #     tf.initialize_all_variables().run()
+    #     for split in ['train', 'val', 'test']:
+    #         anno_path = './data/%s/%s.annotations.pkl' % (split, split)
+    #         save_path = './data/%s/%s.features.hkl' % (split, split)
+    #         annotations = load_pickle(anno_path)
+    #         # 每个图片至少有5个描述语句（有的图片更多）, 避免重复
+    #         image_path = list(annotations['file_name'].unique())
+    #         # 有多少张图片
+    #         n_examples = len(image_path)
 
-            # 矩阵第一维度是图片 index
-            # 和 image_idxs 配合可以达到 caption 与 feature 匹配的目的
-            all_feats = np.ndarray([n_examples, 196, 512], dtype=np.float32)
+    #         # 矩阵第一维度是图片 index
+    #         # 和 image_idxs 配合可以达到 caption 与 feature 匹配的目的
+    #         all_feats = np.ndarray([n_examples, 196, 512], dtype=np.float32)
 
-            for start, end in zip(range(0, n_examples, batch_size), range(batch_size, n_examples + batch_size, batch_size)):
-                image_batch_file = image_path[start:end]
-                image_batch = np.array(
-                    list(map(
-                        lambda x: misc.imresize(
-                            ndimage.imread(x, mode="RGB"), 
-                            (224, 224)
-                        ), 
-                        image_batch_file
-                    ))
-                ).astype(np.float32)
-                feats = sess.run(vggnet.features, feed_dict={vggnet.images: image_batch})
-                all_feats[start:end, :] = feats
-                print ("Processed %d %s features.." % (end, split))
+    #         for start, end in zip(range(0, n_examples, batch_size), range(batch_size, n_examples + batch_size, batch_size)):
+    #             image_batch_file = image_path[start:end]
+    #             image_batch = np.array(
+    #                 list(map(
+    #                     lambda x: misc.imresize(
+    #                         ndimage.imread(x, mode="RGB"), 
+    #                         (224, 224)
+    #                     ), 
+    #                     image_batch_file
+    #                 ))
+    #             ).astype(np.float32)
+    #             feats = sess.run(vggnet.features, feed_dict={vggnet.images: image_batch})
+    #             all_feats[start:end, :] = feats
+    #             print ("Processed %d %s features.." % (end, split))
             
-                # use hickle to save huge feature vectors
-                hickle.dump(all_feats, save_path)
-                print ("Saved %s.." % (save_path))
+    #             # use hickle to save huge feature vectors
+    #             hickle.dump(all_feats, save_path)
+    #             print ("Saved %s.." % (save_path))
 
 
 if __name__ == "__main__":
