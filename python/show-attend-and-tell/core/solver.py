@@ -119,12 +119,12 @@ class CaptioningSolver(object):
         # summary op
         # tf.scalar_summary('batch_loss', loss)
         tf.summary.scalar('batch_loss', loss)
-        for var in tf.trainable_variables():
-            #tf.histogram_summary(var.op.name, var)
-            tf.summary.histogram(var.op.name, var)
-        for grad, var in grads_and_vars:
-            #tf.histogram_summary(var.op.name+'/gradient', grad)
-            tf.summary.histogram(var.op.name+'/gradient', grad)
+        # for var in tf.trainable_variables():
+        #     #tf.histogram_summary(var.op.name, var)
+        #     tf.summary.histogram(var.op.name, var)
+        # for grad, var in grads_and_vars:
+        #     #tf.histogram_summary(var.op.name+'/gradient', grad)
+        #     tf.summary.histogram(var.op.name+'/gradient', grad)
 
         #summary_op = tf.merge_all_summaries()
         summary_op = tf.summary.merge_all()
@@ -176,14 +176,14 @@ class CaptioningSolver(object):
                     # write summary for tensorboard visualization
                     if i % 10 == 0:
                         summary = sess.run(summary_op, feed_dict)
-                        summary_writer.add_summary(summary, e*n_iters_per_epoch + i)
+                        summary_writer.add_summary(summary, e * n_iters_per_epoch + i)
 
                     print ("\nTrain loss at epoch %d & iteration %d (mini-batch): %.5f" %(e+1, i+1, l))
                         
                     if (i+1) % self.print_every == 0:
                         print ("\nTrain loss at epoch %d & iteration %d (mini-batch): %.5f" %(e+1, i+1, l))
                         # 对应的 caption 真值
-                        ground_truths = captions[image_idxs == image_idxs_batch[0]]
+                        ground_truths = captions[image_ids == image_ids_batch[0]]
                         decoded = decode_captions(ground_truths, self.model.idx_to_word)
                         for j, gt in enumerate(decoded):
                             print("Ground truth %d: %s" %(j+1, gt))
