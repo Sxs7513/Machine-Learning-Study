@@ -25,11 +25,27 @@ def main(FLAGS):
     with tf.Graph().as_default():
         with tf.Session() as sess:
             print("""Build Network""")
+
+            print("GET NetWork_FN")
             network_fn = nets_factory.get_network_fn(
                 FLAGS.loss_model,
                 num_classes=1,
                 is_training=False
             )
+
+            print("GET PROCESS_IAMGE_FN")
+            image_preprocessing_fn, image_unprocessing_fn = preprocessing_factory.get_preprocessing(
+                FLAGS.loss_model,
+                is_training=False
+            )
+            # 获得增强后的图像样本，[N, image_size, image_size, 3]
+            processed_images = reader.image(
+                FLAGS.batch_size, FLAGS.image_size, FLAGS.image_size,
+                'train2014/', image_preprocessing_fn, epochs=FLAGS.epoch
+            )
+
+
+
 
 
 if __name__ == "__main__":

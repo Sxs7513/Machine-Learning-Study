@@ -240,7 +240,9 @@ class CaptionGenerator(object):
         # 初始化LSTM神经元, 里面隐藏层维度是 1024
         lstm_cell = tf.nn.rnn_cell.LSTMCell(num_units=self.H)
 
-        # 共输出 n_time_step 个词
+        # 共输出 n_time_step 个词，在循环中非第一次的时候很多层需要复用权重，利用 variable_scope 的 reuse
+        # 来控制。这个与普通图像识别的时候有很大不同，识别的时候构建的图里没有循环部分，各个权重变量只被使用过一次
+        # 但是带有循环神经网络的话，构建图的时候会涉及到权重共享，所以要小心处理
         for t in range(self.T):
             # 注意力层，soft机制
             # context => [N, 512]

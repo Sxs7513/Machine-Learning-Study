@@ -103,6 +103,9 @@ class CaptioningSolver(object):
         # test 直接复用 train 的参数
         with tf.variable_scope(tf.get_variable_scope()):
             loss = self.model.build_model()
+            # 变量共享，reuse_variables 作用等于将 reuse 置于 true
+            # http://jermmy.xyz/2017/08/25/2017-8-25-learn-tensorflow-shared-variables/
+            # https://zhuanlan.zhihu.com/p/37922147
             tf.get_variable_scope().reuse_variables()
             _, _, generated_captions = self.model.build_sampler(max_len=20)
 
@@ -115,13 +118,13 @@ class CaptioningSolver(object):
 
         # summary op
         # tf.scalar_summary('batch_loss', loss)
-        # tf.summary.scalar('batch_loss', loss)
-        # for var in tf.trainable_variables():
-        #     #tf.histogram_summary(var.op.name, var)
-        #     tf.summary.histogram(var.op.name, var)
-        # for grad, var in grads_and_vars:
-        #     #tf.histogram_summary(var.op.name+'/gradient', grad)
-        #     tf.summary.histogram(var.op.name+'/gradient', grad)
+        tf.summary.scalar('batch_loss', loss)
+        for var in tf.trainable_variables():
+            #tf.histogram_summary(var.op.name, var)
+            tf.summary.histogram(var.op.name, var)
+        for grad, var in grads_and_vars:
+            #tf.histogram_summary(var.op.name+'/gradient', grad)
+            tf.summary.histogram(var.op.name+'/gradient', grad)
 
         #summary_op = tf.merge_all_summaries()
         summary_op = tf.summary.merge_all()

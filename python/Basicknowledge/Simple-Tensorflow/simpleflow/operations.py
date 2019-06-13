@@ -57,12 +57,12 @@ class Add(Operation):
             grad = np.ones_like(self.output_value)
         
         grad_wrt_x = grad
-        # 如果输出的维度大于输入的那么代表存在广播，那么把到这一层的导数加起来
-        # 不明白的话看看作者的文章
+        # 如果梯度的维度大于输入x那么代表y的维度大于x导致输出的时候产生了广播
+        # 那么从0维不断累加直到维度相同即可，因为广播的时候也总是将 x 从 0 维
+        # 起增加的
         while np.ndim(grad_wrt_x) > len(np.shape(x)):
             grad_wrt_x = np.sum(grad_wrt_x, axis=0)
-        # 比如如果 x 是一个长度为 2 的列向量，那么需要将到这一层的导数列相加得到与 x 形状一样的梯度向量
-        # 为什么只处理维度size是 1 的情况呢？因为只要size大于1的时候，就必须情况符合才能相加啊哈哈哈
+        # 广播也可能存在于 x 的内部，当 x shape 里存在 1 的时候，也可能被广播
         for axis, size in enumerate(np.shape(x)):
             if size == 1:
                 grad_wrt_x = np.sum(grad_wrt_x, axis=axis, keepdims=True)
