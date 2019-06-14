@@ -33,7 +33,18 @@ assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
 ############################################################
 
 def log(text, array=None):
-    return
+    """Prints a text message. And, optionally, if a Numpy array is provided it
+    prints it's shape, min, and max values.
+    """
+    if array is not None:
+        text = text.ljust(25)
+        text += ("shape: {:20}  ".format(str(array.shape)))
+        if array.size:
+            text += ("min: {:10.5f}  max: {:10.5f}".format(array.min(), array.max()))
+        else:
+            text += ("min: {:10}  max: {:10}".format("",""))
+        text += "  {}".format(array.dtype)
+    print(text)
 
 
 # 为什么这么写的原因可以看下面的链接
@@ -64,7 +75,7 @@ def compute_backbone_shapes(config, image_shape):
 ############################################################
 
 # identity_block 与 conv_block 的区别在于 identity_block 的旁路是直接一条线，conv_block 的旁路有一个卷积层
-# 有这样的区别是为了保证旁路出来的featuremap和主路的featuremap尺寸一致，这样它们才能相加
+# 有这样的区别是为了保证旁路出来的 featuremap 和主路的 featuremap 尺寸一致，这样它们才能相加
 def identity_block(input_tensor, kernel_size, filters, stage, block, use_bias=True, train_bn=True):
     # x, 3, [64, 64, 256], stage=2, block='b', train_bn=train_bn
     nb_filter1, nb_filter2, nb_filter3 = filters
@@ -256,7 +267,7 @@ class ProposalLayer(KE.Layer):
             names=["refined_anchors"]
         )
 
-        # 保证 boxes 区域都在原图内
+        # 保证 boxes 区域都在正常范围内
         window = np.array([0, 0, 1, 1], dtype=np.float32)
         boxes = utils.batch_slice(
             boxes,
@@ -592,6 +603,180 @@ class DetectionTargetLayer(KE.Layer):
 
     def compute_mask(self, inputs, mask=None):
         return [None, None, None, None]
+
+
+
+############################################################
+#  Detection Layer
+############################################################
+
+# rois => [roi_num, 4]
+# probs => [roi_num, num_classes]
+# deltas => [roi_num, 4]
+# window => [4] window 具体含义看 utils 模块的 resize_image
+# 但是注意在这里它是相对于缩放后的图像大小的，所以是小数
+def refine_detections_graph(rois, probs, deltas, window, config):
+    """Refine classified proposals and filter overlaps and return final
+    detections.
+
+    Inputs:
+        rois: [N, (y1, x1, y2, x2)] in normalized coordinates
+        probs: [N, num_classes]. Class probabilities.
+        deltas: [N, num_classes, (dy, dx, log(dh), log(dw))]. Class-specific
+                bounding box deltas.
+        window: (y1, x1, y2, x2) in normalized coordinates. The part of the image
+            that contains the image excluding the padding.
+
+    Returns detections shaped: [num_detections, (y1, x1, y2, x2, class_id, score)] where
+        coordinates are normalized.
+    """
+    # [roi_num]
+    class_ids = tf.argmax(probs, axis=1, output_type=tf.int32)
+    # 自己写个用例试一下就知道了，为了配合 gather_nd 来获取到对应的 box
+    # [roi_num, 2]
+    indices = tf.stack([tf.range(probs.shape[0]), class_ids], axis=1)
+    # [roi_num]
+    class_scores = tf.gather_nd(probs, indices)
+    # [roi_num]
+    deltas_specific = tf.gather_nd(deltas, indices)
+    # bbox 应用到 rois 上面
+    # [roi_num, 4]
+    # Shape: [boxes, (y1, x1, y2, x2)] in normalized coordinates
+    refined_rois = apply_box_deltas_graph(
+        rois, deltas_specific * config.BBOX_STD_DEV
+    )
+    # test 阶段要严格一些，需要保证 box 都在 window 内
+    refined_rois = clip_boxes_graph(refined_rois, window)
+
+    # TODO: Filter out boxes with zero area
+
+    # Filter out background boxes
+    keep = tf.where(class_ids > 0)[:, 0]
+    # Filter out low confidence boxes
+    if config.DETECTION_MIN_CONFIDENCE:
+        conf_keep = tf.where(class_scores >= config.DETECTION_MIN_CONFIDENCE)[:, 0]
+        keep = tf.sets.set_intersection(
+            tf.expand_dims(keep, 0),
+            tf.expand_dims(conf_keep, 0)
+        )
+        keep = tf.sparse_tensor_to_dense(keep)[0]
+
+    # Apply per-class NMS
+    # 1. Prepare variables
+    pre_nms_class_ids = tf.gather(class_ids, keep)
+    pre_nms_scores = tf.gather(class_scores, keep)
+    pre_nms_rois = tf.gather(refined_rois,   keep)
+    unique_pre_nms_class_ids = tf.unique(pre_nms_class_ids)[0]
+
+    def nms_keep_map(class_id):
+        """Apply Non-Maximum Suppression on ROIs of the given class."""
+        # Indices of ROIs of the given class
+        ixs = tf.where(tf.equal(pre_nms_class_ids, class_id))[:, 0]
+        # Apply NMS
+        class_keep = tf.image.non_max_suppression(
+                tf.gather(pre_nms_rois, ixs),
+                tf.gather(pre_nms_scores, ixs),
+                max_output_size=config.DETECTION_MAX_INSTANCES,
+                iou_threshold=config.DETECTION_NMS_THRESHOLD
+        )
+        # Map indices
+        class_keep = tf.gather(keep, tf.gather(ixs, class_keep))
+        # Pad with -1 so returned tensors have the same shape
+        gap = config.DETECTION_MAX_INSTANCES - tf.shape(class_keep)[0]
+        class_keep = tf.pad(
+            class_keep, [(0, gap)],
+            mode='CONSTANT', constant_values=-1
+        )
+        # Set shape so map_fn() can infer result shape
+        class_keep.set_shape([config.DETECTION_MAX_INSTANCES])
+        return class_keep
+
+    # 2. Map over class IDs
+    nms_keep = tf.map_fn(
+        nms_keep_map, unique_pre_nms_class_ids,
+        dtype=tf.int64
+    )
+    # 3. Merge results into one list, and remove -1 padding
+    nms_keep = tf.reshape(nms_keep, [-1])
+    nms_keep = tf.gather(nms_keep, tf.where(nms_keep > -1)[:, 0])
+    # 4. Compute intersection between keep and nms_keep
+    keep = tf.sets.set_intersection(
+        tf.expand_dims(keep, 0),
+        tf.expand_dims(nms_keep, 0)
+    )
+    keep = tf.sparse_tensor_to_dense(keep)[0]
+    # Keep top detections
+    roi_count = config.DETECTION_MAX_INSTANCES
+    class_scores_keep = tf.gather(class_scores, keep)
+    num_keep = tf.minimum(tf.shape(class_scores_keep)[0], roi_count)
+    top_ids = tf.nn.top_k(class_scores_keep, k=num_keep, sorted=True)[1]
+    keep = tf.gather(keep, top_ids)
+
+    # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
+    # Coordinates are normalized.
+    detections = tf.concat(
+        [
+            tf.gather(refined_rois, keep),
+            tf.to_float(tf.gather(class_ids, keep))[..., tf.newaxis],
+            tf.gather(class_scores, keep)[..., tf.newaxis]
+        ], 
+        axis=1
+    )
+
+    # 如果选出的框不够，用 0 来填充
+    gap = config.DETECTION_MAX_INSTANCES - tf.shape(detections)[0]
+    detections = tf.pad(detections, [(0, gap), (0, 0)], "CONSTANT")
+    return detections
+
+
+class DetectionLayer(KE.Layer):
+    """Takes classified proposal boxes and their bounding box deltas and
+    returns the final detection boxes.
+
+    Returns:
+    [batch, num_detections, (y1, x1, y2, x2, class_id, class_score)] where
+    coordinates are normalized.
+    """
+
+    def __init__(self, config=None, **kwargs):
+        super(DetectionLayer, self).__init__(**kwargs)
+        self.config = config
+
+    def call(self, inputs):
+        # [N, proposal_count, 4]
+        rois = inputs[0]
+        # [N, proposal_count, num_classes]
+        mrcnn_class = inputs[1]
+        # [N, proposal_count, num_classes, 4]
+        mrcnn_bbox = inputs[2]
+        # 图片缩放的信息，与数据集所有的类别 [N, 1 + 3 + 3 + 4 + 1 + self.NUM_CLASSES]
+        image_meta = inputs[3]
+
+        
+        m = parse_image_meta_graph(image_meta)
+        image_shape = m['image_shape'][0]
+        window = norm_boxes_graph(m['window'], image_shape[:2])
+
+        # Run detection refinement graph on each item in the batch
+        detections_batch = utils.batch_slice(
+            [rois, mrcnn_class, mrcnn_bbox, window],
+            lambda x, y, w, z: refine_detections_graph(x, y, w, z, self.config),
+            self.config.IMAGES_PER_GPU
+        )
+
+        # Reshape output
+        # [batch, num_detections, (y1, x1, y2, x2, class_id, class_score)] in
+        # normalized coordinates
+        # [N, num_detections, (y1, x1, y2, x2, class_id, class_score)]
+        return tf.reshape(
+            detections_batch,
+            [self.config.BATCH_SIZE, self.config.DETECTION_MAX_INSTANCES, 6]
+        )
+
+    def compute_output_shape(self, input_shape):
+        return (None, self.config.DETECTION_MAX_INSTANCES, 6)
+
+
 
 ############################################################
 #  Region Proposal Network (RPN)
@@ -1064,8 +1249,7 @@ def data_generator(
     # [[256, 256], [128, 128], [64, 64], [32, 32], [16, 16]]
     backbone_shapes = compute_backbone_shapes(config, config.IMAGE_SHAPE)
 
-    # 生成五个特征图的所有 anchors，大小位置相对于原图
-    # 对于 1024 * 1024 的原图, a => [261888 , 4]
+    # 生成五个特征图的所有 anchors，大小位置相对于1024 * 1024, a => [261888 , 4]
     anchors = utils.generate_pyramid_anchors(
         config.RPN_ANCHOR_SCALES,
         config.RPN_ANCHOR_RATIOS,
@@ -1164,6 +1348,7 @@ def data_generator(
 
                 if random_rois:
                     pass
+                # outputs 为空即可, loss 函数不依赖于它
                 yield inputs, outputs
 
                 # 很关键, 每填满一个batch必须要记得重置为0
@@ -1298,6 +1483,7 @@ class MaskRCNN():
 
         # Anchors
         if mode == 'training':
+            # 生成位置大小相对于原图的 anchors
             anchors = self.get_anchors(config.IMAGE_SHAPE)
             # 上面生成的 anchors 是针对一张原图的，但是可能是多张图同时训练
             # 所以需要为每张图都生成 anchors, 在 batchSize 为 2 的时候, anchors => [2, 261888, 4]
@@ -1372,6 +1558,8 @@ class MaskRCNN():
                 input_gt_masks
             ])
 
+            # predict
+
             # 获得针对 rois 的分类与边框回归的预测值
             # mrcnn_class_logits => [N, 200, num_classes]
             # mrcnn_class => [N, 200, num_classes]
@@ -1423,15 +1611,79 @@ class MaskRCNN():
             # 生成网络
             model = KM.Model(inputs, outputs, name='mask_rcnn')
         else:
-            # 在训练的的情况下, 
+            # 在 test 的情况下, 生成网络
+
+            # 在 test 情况下, 先生成 ProposalLayer 初步生成的 rois 的分类与边框回归的预测值
+            # mrcnn_class_logits => [N, proposal_count, num_classes]
+            # mrcnn_class => [N, proposal_count, num_classes]
+            # mrcnn_bbox => [N, proposal_count, num_classes, 4]
             mrcnn_class_logits, mrcnn_class, mrcnn_bbox = fpn_classifier_graph(
                 rpn_rois, mrcnn_feature_maps, input_image_meta,
                 config.POOL_SIZE, config.NUM_CLASSES,
                 train_bn=config.TRAIN_BN,
                 fc_layers_size=config.FPN_CLASSIF_FC_LAYERS_SIZE
             )
+            
+            # [N, num_detections, (y1, x1, y2, x2, class_id, class_score)]
+            detections = DetectionLayer(config, name="mrcnn_detection")(
+                [rpn_rois, mrcnn_class, mrcnn_bbox, input_image_meta]
+            )
+
+            detection_boxes = KL.Lambda(lambda x: x[..., :4])(detections)
+            mrcnn_mask = build_fpn_mask_graph(
+                detection_boxes, mrcnn_feature_maps,
+                input_image_meta,
+                config.MASK_POOL_SIZE,
+                config.NUM_CLASSES,
+                train_bn=config.TRAIN_BN
+            )
+
+            model = KM.Model(
+                [input_image, input_image_meta, input_anchors],
+                [detections, mrcnn_class, mrcnn_bbox, mrcnn_mask, rpn_rois, rpn_class, rpn_bbox],
+                name='mask_rcnn'
+            )
+        
+        # Add multi-GPU support.
+        if config.GPU_COUNT > 1:
+            from mrcnn.parallel_model import ParallelModel
+            model = ParallelModel(model, config.GPU_COUNT)
 
         return model
+
+    
+    def find_last(self):
+        """Finds the last checkpoint file of the last trained model in the
+        model directory.
+        Returns:
+            The path of the last checkpoint file
+        """
+        # Get directory names. Each directory corresponds to a model
+        # 关于 os.walk 的返回, 看下面的连接
+        # https://blog.csdn.net/qq_33733970/article/details/77585297
+        dir_names = next(os.walk(self.model_dir))[1]
+        key = self.config.NAME.lower()
+        dir_names = filter(lambda f: f.startswith(key), dir_names)
+        dir_names = sorted(dir_names)
+        if not dir_names:
+            import errno
+            raise FileNotFoundError(
+                errno.ENOENT,
+                "Could not find model directory under {}".format(self.model_dir)
+            )
+        # Pick last directory
+        dir_name = os.path.join(self.model_dir, dir_names[-1])
+        # Find the last checkpoint
+        checkpoints = next(os.walk(dir_name))[2]
+        checkpoints = filter(lambda f: f.startswith("mask_rcnn"), checkpoints)
+        checkpoints = sorted(checkpoints)
+        if not checkpoints:
+            import errno
+            raise FileNotFoundError(
+                errno.ENOENT, "Could not find weight files in {}".format(dir_name))
+        checkpoint = os.path.join(dir_name, checkpoints[-1])
+        return checkpoint
+
             
 
     def load_weights(self, filepath, by_name=False, exclude=None):
@@ -1477,7 +1729,8 @@ class MaskRCNN():
         # Optimizer object
         optimizer = keras.optimizers.SGD(
             lr=learning_rate, momentum=momentum,
-            clipnorm=self.config.GRADIENT_CLIP_NORM)
+            clipnorm=self.config.GRADIENT_CLIP_NORM
+        )
         # Add Losses
         # First, clear previously set losses to avoid duplication
         self.keras_model._losses = []
@@ -1491,7 +1744,10 @@ class MaskRCNN():
                 continue
             loss = (
                 tf.reduce_mean(layer.output, keepdims=True)
-                * self.config.LOSS_WEIGHTS.get(name, 1.))
+                * self.config.LOSS_WEIGHTS.get(name, 1.)
+            )
+            # 使用 add_loss 的原因是它更灵活, 而不必被限制于 model.fit 中传入的 Y
+            # https://stackoverflow.com/questions/50063613/add-loss-function-in-keras
             self.keras_model.add_loss(loss)
 
         # Add L2 Regularization
@@ -1499,13 +1755,15 @@ class MaskRCNN():
         reg_losses = [
             keras.regularizers.l2(self.config.WEIGHT_DECAY)(w) / tf.cast(tf.size(w), tf.float32)
             for w in self.keras_model.trainable_weights
-            if 'gamma' not in w.name and 'beta' not in w.name]
+            if 'gamma' not in w.name and 'beta' not in w.name
+        ]
         self.keras_model.add_loss(tf.add_n(reg_losses))
 
         # Compile
         self.keras_model.compile(
             optimizer=optimizer,
-            loss=[None] * len(self.keras_model.outputs))
+            loss=[None] * len(self.keras_model.outputs)
+        )
 
         # Add metrics for losses
         for name in loss_names:
@@ -1515,7 +1773,8 @@ class MaskRCNN():
             self.keras_model.metrics_names.append(name)
             loss = (
                 tf.reduce_mean(layer.output, keepdims=True)
-                * self.config.LOSS_WEIGHTS.get(name, 1.))
+                * self.config.LOSS_WEIGHTS.get(name, 1.)
+            )
             self.keras_model.metrics_tensors.append(loss)
 
     
@@ -1539,7 +1798,8 @@ class MaskRCNN():
             if layer.__class__.__name__ == 'Model':
                 print("In model: ", layer.name)
                 self.set_trainable(
-                    layer_regex, keras_model=layer, indent=indent + 4)
+                    layer_regex, keras_model=layer, indent=indent + 4
+                )
                 continue
 
             if not layer.weights:
@@ -1600,10 +1860,11 @@ class MaskRCNN():
             "all": ".*",
         }
 
+        # 从传入的配置找到可训练的层
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
 
-        # 
+        # 生成输出训练数据的生成器
         train_generator = data_generator(
             train_dataset, self.config, shuffle=True,
             augmentation=augmentation,
@@ -1620,10 +1881,14 @@ class MaskRCNN():
 
         # Callbacks
         callbacks = [
-            keras.callbacks.TensorBoard(log_dir=self.log_dir,
-                                        histogram_freq=0, write_graph=True, write_images=False),
-            keras.callbacks.ModelCheckpoint(self.checkpoint_path,
-                                            verbose=0, save_weights_only=True),
+            keras.callbacks.TensorBoard(
+                log_dir=self.log_dir,
+                histogram_freq=0, write_graph=True, write_images=False
+            ),
+            keras.callbacks.ModelCheckpoint(
+                self.checkpoint_path,
+                verbose=0, save_weights_only=True
+            ),
         ]
 
         if custom_callbacks:
@@ -1633,7 +1898,9 @@ class MaskRCNN():
         log("\nStarting at epoch {}. LR={}\n".format(self.epoch, learning_rate))
         log("Checkpoint Path: {}".format(self.checkpoint_path))
 
+        # 设置可训练的层
         self.set_trainable(layers)
+        # 编译模型
         self.compile(learning_rate, self.config.LEARNING_MOMENTUM)
 
         # Work-around for Windows: Keras fails on Windows when using
@@ -1657,6 +1924,151 @@ class MaskRCNN():
             use_multiprocessing=True,
         )
         self.epoch = max(self.epoch, epochs)
+
+    
+    def mold_inputs(self, images):
+        molded_images = []
+        image_metas = []
+        windows = []
+        for image in images:
+            # Resize image
+            molded_image, window, scale, padding, crop = utils.resize_image(
+                image,
+                min_dim=self.config.IMAGE_MIN_DIM,
+                min_scale=self.config.IMAGE_MIN_SCALE,
+                max_dim=self.config.IMAGE_MAX_DIM,
+                mode=self.config.IMAGE_RESIZE_MODE
+            )
+            molded_image = mold_image(molded_image, self.config)
+            # Build image_meta
+            image_meta = compose_image_meta(
+                0, image.shape, molded_image.shape, window, scale,
+                np.zeros([self.config.NUM_CLASSES], dtype=np.int32))
+            # Append
+            molded_images.append(molded_image)
+            windows.append(window)
+            image_metas.append(image_meta)
+        # Pack into arrays
+        molded_images = np.stack(molded_images)
+        image_metas = np.stack(image_metas)
+        windows = np.stack(windows)
+        return molded_images, image_metas, windows
+
+    
+    def unmold_detections(self, detections, mrcnn_mask, original_image_shape, image_shape, window):
+        """Reformats the detections of one image from the format of the neural
+        network output to a format suitable for use in the rest of the
+        application.
+
+        detections: [N, (y1, x1, y2, x2, class_id, score)] in normalized coordinates
+        mrcnn_mask: [N, height, width, num_classes]
+        original_image_shape: [H, W, C] Original image shape before resizing
+        image_shape: [H, W, C] Shape of the image after resizing and padding
+        window: [y1, x1, y2, x2] Pixel coordinates of box in the image where the real
+                image is excluding the padding.
+
+        Returns:
+        boxes: [N, (y1, x1, y2, x2)] Bounding boxes in pixels
+        class_ids: [N] Integer class IDs for each bounding box
+        scores: [N] Float probability scores of the class_id
+        masks: [height, width, num_instances] Instance masks
+        """
+        zero_ix = np.where(detections[:, 4] == 0)[0]
+        # 非被填充框是从哪开始
+        N = zero_ix[0] if zero_ix.shape[0] > 0 else detections.shape[0]
+
+        boxes = detections[:N, :4]
+        class_ids = detections[:N, 4].astype(np.int32)
+        scores = detections[:N, 5]
+        # 找到预测的对应类别的掩膜
+        masks = mrcnn_mask[np.arange(N), :, :, class_ids]
+
+        # 作者注释写的很明白
+        # Translate normalized coordinates in the resized image to pixel
+        # coordinates in the original image before resizing 
+        window = utils.norm_boxes(window, image_shape[:2])
+        wy1, wx1, wy2, wx2 = window
+        shift = np.array([wy1, wx1, wy2, wx2])
+        # 窗口的大小，即图像经过缩放后的大小
+        wh = wy2 - wy1
+        ww = wx2 - wx1
+        scale = np.array([wh, ww, wh, ww])
+        # box 相对于 window 的位置大小
+        boxes = np.divide(boxes - shift, scale)
+        # 将 box 还原为相对于原图的真实大小位置，因为 window 是只经过缩放的
+        # 所以直接按照原图 shape 来还原就可以了
+        boxes = utils.denorm_boxes(boxes, original_image_shape[:2])
+        
+        # Filter out detections with zero area. Happens in early training when
+        # network weights are still random
+        exclude_ix = np.where(
+            (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0)[0]
+        )
+        if exclude_ix.shape[0] > 0:
+            boxes = np.delete(boxes, exclude_ix, axis=0)
+            class_ids = np.delete(class_ids, exclude_ix, axis=0)
+            scores = np.delete(scores, exclude_ix, axis=0)
+            masks = np.delete(masks, exclude_ix, axis=0)
+            N = class_ids.shape[0]
+
+        full_masks = []
+        for i in range(N):
+            full_mask = utils.unmold_mask(masks[i], boxes[i], original_image_shape)
+            full_masks.append(full_mask)
+         full_masks = np.stack(full_masks, axis=-1)\
+            if full_masks else np.empty(original_image_shape[:2] + (0,))
+
+        return boxes, class_ids, scores, full_masks   
+
+
+
+    
+    def detect(self, images, verbose=0):
+        assert self.mode == "inference", "Create model in inference mode."
+        assert len(images) == self.config.BATCH_SIZE, "len(images) must be equal to BATCH_SIZE"
+
+        if verbose:
+            log("Processing {} images".format(len(images)))
+            for image in images:
+                log("image", image)
+
+        # 查一查相关函数就知道这三个参数的用处了
+        molded_images, image_metas, windows = self.mold_inputs(images)
+
+        image_shape = molded_images[0].shape
+        for g in molded_images[1:]:
+            assert g.shape == image_shape,\
+                "After resizing, all images must have the same size. Check IMAGE_RESIZE_MODE and image sizes."
+
+        # 生成 anchor 操作与训练阶段相同
+        anchors = self.get_anchors(image_shape)
+        anchors = np.broadcast_to(anchors, (self.config.BATCH_SIZE,) + anchors.shape)
+
+        if verbose:
+            log("molded_images", molded_images)
+            log("image_metas", image_metas)
+            log("anchors", anchors)
+
+        detections, _, _, mrcnn_mask, _, _, _ = \
+            self.keras_model.predict([ mold_image, image_metas, anchors ])
+
+        results = []
+        for i, image in enumerate(images):
+            final_rois, final_class_ids, final_scores, final_masks =\
+                self.unmold_detections(
+                    detections[i], mrcnn_mask[i],
+                    image.shape, molded_images[i].shape,
+                    windows[i]
+                )
+            results.append({
+                "rois": final_rois,
+                "class_ids": final_class_ids,
+                "scores": final_scores,
+                "masks": final_masks,
+            })
+        return results
+
+
 
     
     # 作用是生成 5 个特征图的所有坐标归一化后的 anchors

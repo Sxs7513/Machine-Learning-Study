@@ -177,7 +177,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--model', required=False,
-        default="coco",
+        default="renet-101",
         metavar="/path/to/weights.h5",
         help="Path to weights .h5 file or 'coco'"
     )
@@ -222,11 +222,15 @@ if __name__ == '__main__':
 
     # 生成模型
     if args.command == "train":
-        model = modellib.MaskRCNN(mode="training", config=config,
-                                  model_dir=args.logs)
+        model = modellib.MaskRCNN(
+            mode="training", config=config,
+            model_dir=args.logs
+        )
     else:
-        model = modellib.MaskRCNN(mode="inference", config=config,
-                                  model_dir=args.logs)
+        model = modellib.MaskRCNN(
+            mode="inference", config=config,
+            model_dir=args.logs
+        )
 
     # print([l.name for l in model.keras_model.layers])
 

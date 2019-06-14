@@ -18,8 +18,8 @@ def load_coco_data(data_path='./data', split='train'):
         data['captions'] = pickle.load(f)
     with open(os.path.join(data_path, '%s.image.idxs.pkl' %split), 'rb') as f:
         data['image_idxs'] = pickle.load(f)
-    with open(os.path.join(data_path, '%s.image.ids.pkl' % split), 'rb') as f:
-        data['image_ids'] = pickle.load(f)
+    with open(os.path.join(data_path, '%s.image.path.pkl' % split), 'rb') as f:
+        data['image_path'] = pickle.load(f)
 
     if split == 'train':       
         with open(os.path.join(data_path, 'word_to_idx.pkl'), 'rb') as f:

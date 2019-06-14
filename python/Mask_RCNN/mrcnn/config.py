@@ -50,7 +50,7 @@ class Config(object):
     # See model.compute_backbone_shapes
     COMPUTE_BACKBONE_SHAPE = None
 
-    # 经过 reset 网络后提取的 5 个 feature_map 相比原图缩小的比例
+    # 经过 reset101 网络后提取的 5 个 feature_map 相比原图缩小的比例
     BACKBONE_STRIDES = [4, 8, 16, 32, 64]
 
     # Size of the fully-connected layers in the classification graph

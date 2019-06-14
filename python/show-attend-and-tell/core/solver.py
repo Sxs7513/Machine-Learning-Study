@@ -88,17 +88,15 @@ class CaptioningSolver(object):
 
     def train(self):
         # n_examples = self.data["features"].shape[0]
-        self.data["image_ids"] = np.array(self.data["image_ids"])
-        self.val_data["image_ids"] = np.array(self.val_data["image_ids"])
-        n_examples = np.shape(self.data["image_ids"])[0]
+        n_examples = np.shape(self.data["image_path"])[0]
         n_iters_per_epoch = int(np.ceil(float(n_examples) / self.batch_size))
         # features = self.data['features']
         captions = self.data['captions']
         image_idxs = self.data['image_idxs']
-        image_ids = self.data["image_ids"]
+        image_path = self.data["image_path"]
         # val_features = self.val_data['features']
         # n_iters_val = int(np.ceil(float(val_features.shape[0]) / self.batch_size))
-        n_iters_val = int(np.ceil(float(np.shape(self.val_data["image_ids"])[0]) / self.batch_size))
+        n_iters_val = int(np.ceil(float(np.shape(self.val_data["image_path"])[0]) / self.batch_size))
 
         # test 直接复用 train 的参数
         with tf.variable_scope(tf.get_variable_scope()):
@@ -156,7 +154,7 @@ class CaptioningSolver(object):
                 rand_idxs = np.random.permutation(n_examples)
                 captions = captions[rand_idxs]
                 # image_idxs = image_idxs[rand_idxs]
-                image_ids = image_ids[rand_idxs]
+                image_path = image_path[rand_idxs]
 
                 for i in range(n_iters_per_epoch):
                     captions_batch = captions[i * self.batch_size: (i+1)* self.batch_size]
@@ -164,9 +162,8 @@ class CaptioningSolver(object):
                     # image_idxs_batch = image_idxs[i*self.batch_size: (i+1)*self.batch_size]
                     # features_batch = features[image_idxs_batch]
                     # 训练阶段才生成 feature，无奈之举因为图片太多了
-                    image_ids_batch = image_ids[i*self.batch_size: (i+1)*self.batch_size]
-                    image_batch_file = [imagePath for imagePath in image_ids_batch]
-                    image_batch = self.get_image_batch(image_batch_file)
+                    image_path_batch = image_path[i*self.batch_size: (i+1)*self.batch_size]
+                    image_batch = self.get_image_batch(image_path_batch)
                     features_batch = sess.run(self.vggnet.features, feed_dict={self.vggnet.images: image_batch})
                 
                     feed_dict = { self.model.features: features_batch, self.model.captions: captions_batch }
@@ -182,8 +179,8 @@ class CaptioningSolver(object):
                         
                     if (i+1) % self.print_every == 0:
                         print ("\nTrain loss at epoch %d & iteration %d (mini-batch): %.5f" %(e+1, i+1, l))
-                        # 对应的 caption 真值
-                        ground_truths = captions[image_ids == image_ids_batch[0]]
+                        # 对应的 caption 真值, 取batch中第一张图片的
+                        ground_truths = captions[image_path == image_path_batch[0]]
                         decoded = decode_captions(ground_truths, self.model.idx_to_word)
                         for j, gt in enumerate(decoded):
                             print("Ground truth %d: %s" %(j+1, gt))
@@ -199,11 +196,18 @@ class CaptioningSolver(object):
                 prev_loss = curr_loss
                 curr_loss = 0
 
+                # 保存模型
+                if (e + 1) % self.save_every == 0:
+                    saver.save(sess, os.path.join(self.model_path, 'model'), global_step=e+1)
+                    print ("model-%s saved." % (e+1))
+
                 # 每个 epoch 结束后，使用验证集检测
                 if self.print_bleu:
-                    all_gen_cap = np.ndarray((val_features.shape[0], 20))
+                    all_gen_cap = np.ndarray((self.val_data["image_path"].shape[0], 20))
                     for i in range(n_iters_val):
-                        features_batch = val_features[i*self.batch_size: (i+1)*self.batch_size]
+                        image_path_batch = self.val_data["image_path"][i*self.batch_size: (i+1)*self.batch_size]
+                        image_batch = self.get_image_batch(image_path_batch)
+                        features_batch = sess.run(self.vggnet.features, feed_dict={self.vggnet.images: image_batch})
                         feed_dict = { self.model.features: features_batch }
                         gen_cap = sess.run(generated_captions, feed_dict=feed_dict)
                         # 将预测结果按顺序填入到 all_gen_cap
@@ -214,11 +218,6 @@ class CaptioningSolver(object):
                     # https://www.cnblogs.com/by-dream/p/7679284.html
                     scores = evaluate(data_path='./data', split='val', get_scores=True)
                     write_bleu(scores=scores, path=self.model_path, epoch=e)
-                
-                # 保存模型
-                if (e + 1) % self.save_every == 0:
-                    saver.save(sess, os.path.join(self.model_path, 'model'), global_step=e+1)
-                    print ("model-%s saved." % (e+1))
 
     
     def test(self, data, split='train', attention_visualization=True, save_sampled_captions=True):

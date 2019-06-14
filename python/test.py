@@ -1,16 +1,11 @@
 import tensorflow as tf
 import numpy as np
 
-x = tf.random_uniform(
-    [
-        2,3,4,5
-    ],
-    minval=0, maxval=1,
-    dtype=tf.float32
-)
-mean, variance = tf.nn.moments(x, [0, 1, 2])
+x = tf.Variable([
+    [1,2,5,4],
+    [5,9,7,8],
+])
 with tf.Session() as sess:
-    m, v = sess.run([mean, variance])
-    print(m, v)
-    print(np.shape(m))
-    print(np.shape(v))
+    tf.global_variables_initializer().run()
+    class_ids = tf.argmax(x, axis=1, output_type=tf.int32)
+    print(sess.run(tf.stack([tf.range(x.shape[0]), class_ids], axis=1)))

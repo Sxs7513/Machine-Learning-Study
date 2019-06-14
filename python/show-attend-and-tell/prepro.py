@@ -132,14 +132,14 @@ def _build_image_idxs(annotations, id_to_idx):
     return image_idxs
 
 
-def _build_images_ids(annotations):
+def _build_images_path(annotations):
     # image_ids = np.ndarray(len(annotations), dtype=np.int32)
-    image_ids = []
-    image_ids_origin = annotations['file_name']
-    for i, image_id in enumerate(image_ids_origin):
+    image_path = []
+    image_path_origin = annotations['file_name']
+    for i, image_path in enumerate(image_path_origin):
         # image_ids[i] = image_id
-        image_ids.append(image_id)
-    return image_ids
+        image_path.append(image_path)
+    return np.array(image_path)
 
 
 def main():
@@ -199,8 +199,8 @@ def main():
         save_pickle(image_idxs, './data/%s/%s.image.idxs.pkl' % (split, split))
 
         # features 过大，采用备选方案，在训练过程中生成图片特征图
-        image_ids = _build_images_ids(annotations)
-        save_pickle(image_ids, './data/%s/%s.image.ids.pkl' % (split, split))
+        image_path = _build_images_path(annotations)
+        save_pickle(image_path, './data/%s/%s.image.path.pkl' % (split, split))
 
         # 存储每张图片里面的所有 caption, 用来进行句子相似程度即 bleu 算法检测 
         # 主要是 val 集合会用到
