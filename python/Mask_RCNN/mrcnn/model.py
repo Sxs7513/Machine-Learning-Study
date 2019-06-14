@@ -1077,7 +1077,8 @@ def load_image_gt(dataset, config, image_id, augment=False, augmentation=None, u
     original_shape = image.shape
     # 缩放图像同时保持宽高比不变
     # image 是 resize 后的图片
-    # window 如果给出了max_dim, 可能会对返回图像进行填充如果是这样的，则窗口是全图的部分图像坐标 (不包括填充的部分)
+    # window 如果给出了max_dim, 可能会对返回图像进行填充, window 代表经过缩放后
+    # 的图片在 max_dim 中的实际位置，左上角与右下角坐标
     # scale 是图像缩放因子
     # padding: 图像填充部分[(top, bottom), (left, right), (0, 0)]
     image, window, scale, padding, crop = utils.resize_image(
