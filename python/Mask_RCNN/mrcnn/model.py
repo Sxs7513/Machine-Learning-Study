@@ -2003,8 +2003,8 @@ class MaskRCNN():
         # Filter out detections with zero area. Happens in early training when
         # network weights are still random
         exclude_ix = np.where(
-            (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0)[0]
-        )
+            (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0
+        )[0]
         if exclude_ix.shape[0] > 0:
             boxes = np.delete(boxes, exclude_ix, axis=0)
             class_ids = np.delete(class_ids, exclude_ix, axis=0)
@@ -2016,14 +2016,11 @@ class MaskRCNN():
         for i in range(N):
             full_mask = utils.unmold_mask(masks[i], boxes[i], original_image_shape)
             full_masks.append(full_mask)
-         full_masks = np.stack(full_masks, axis=-1)\
-            if full_masks else np.empty(original_image_shape[:2] + (0,))
+        full_masks = np.stack(full_masks, axis=-1) if full_masks else np.empty(original_image_shape[:2] + (0,))
 
         return boxes, class_ids, scores, full_masks   
 
 
-
-    
     def detect(self, images, verbose=0):
         assert self.mode == "inference", "Create model in inference mode."
         assert len(images) == self.config.BATCH_SIZE, "len(images) must be equal to BATCH_SIZE"

@@ -34,7 +34,7 @@ DEFAULT_DATASET_YEAR = "2017"
 class CocoConfig(Config):
     NAME = "coco"
 
-    IMAGES_PER_GPU = 2
+    IMAGES_PER_GPU = 1
 
     # Uncomment to train on 8 GPUs (default is 1)
     # GPU_COUNT = 8
@@ -177,7 +177,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--model', required=False,
-        default="renet-101",
+        default="coco",
         metavar="/path/to/weights.h5",
         help="Path to weights .h5 file or 'coco'"
     )
