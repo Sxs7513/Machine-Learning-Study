@@ -29,6 +29,9 @@ def haze_removal(image, windowSize=24, w0=0.6, t0=0.1):
 
 # https://github.com/pfchai/Haze-Removal/blob/master/HazeRemovalWidthGuided.py
 # https://blog.csdn.net/zmshy2128/article/details/53443227
+# https://blog.csdn.net/weixin_40647819/article/details/88775598
+# https://blog.csdn.net/lxy201700/article/details/25104887
+# https://zhuanlan.zhihu.com/p/36813673
 class HazeRemoval:
     def __init__(self, img, omega = 0.85, r = 40):
         self.img = img
@@ -36,6 +39,41 @@ class HazeRemoval:
         self.r = r
         self.eps = 10 ** (-3)
         self.t = 0.1
+
+    
+    def boxFilter(img, r):
+        (rows, cols) = img.shape
+        imDst = np.zeros_like(img)
+        
+        # 首先第一维度进行累加
+        imCum = np.cumsum(img, 0)
+        # 上边的边缘, 等于 box 中心在 r 处时的累加和
+        imDst[0 : r+1, :] = imCum[r : 2*r+1, :]
+        # 中间部分, 没有边缘的影响, 直接计算它们的行累加和即可. 矩阵相减可以直接计算得
+        imDst[r+1 : rows-r, :] = imCum[2*r+1 : rows, :] - imCum[0 : rows-2*r-1, :]
+        # 下边的边缘
+        imDst[rows-r: rows, :] = np.tile(imCum[rows-1, :], [r, 1]) - imCum[rows-2*r-1 : rows-r-1, :]
+        
+        # 然后第二维度进行累加, 同样得套路, 即可以搞定
+        imCum = np.cumsum(imDst, 1)
+        imDst[:, 0:r+1] = imCum[:, r:2*r+1]
+        imDst[:, r+1:cols-r] = imCum[:, 2*r+1:cols] - imCum[:, 0:cols-2*r-1]
+        imDst[:, cols-r:cols] = np.tile(imCum[:, cols-1], [1, r]).T - imCum[:, cols-2*r-1:cols-r-1]
+
+        return imDst
+
+    
+    # 导向滤波
+    # I => 导向图, 常与 p 是一个东西
+    # p => 带有噪声的图
+    # r => 窗口大小
+    def guidedfilter(I, p, r, eps):
+        boxFilter = self.boxFilter
+        rows, cols = I.shape
+        N = boxFilter(np.ones([rows, cols]), r)
+
+        meanI = boxFilter(I, r) / N
+
 
     
     def _rgb2gray(self, rgb):
@@ -63,9 +101,12 @@ class HazeRemoval:
         for lmax in range(bins - 1, 0, -1):
             if d[lmax] <= 0.999:
                 break
-        A = np.mean(m, axis=2)[darkImage >= ht[1][lmax]].max()       
+        A = np.mean(m, axis=2)[darkImage >= ht[1][lmax]].max()
+        t = 1 - self.omega * darkImage / A       
 
         # 导向滤波 https://blog.csdn.net/baimafujinji/article/details/74750283
+        # https://github.com/pfchai/GuidedFilter/blob/master/guidedfilter.py
+        t = guidedfilter(grayImage, t, self.r, self.eps )
 
 
 
