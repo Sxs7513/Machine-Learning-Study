@@ -121,6 +121,9 @@ class HazeRemoval:
         for lmax in range(bins - 1, 0, -1):
             if d[lmax] <= 0.999:
                 break
+        # 如果使用传统的方法，直接选取图像中的亮度值最高的点作为全局大气光值，
+        # 这样原始有雾图像中的白色物体会对此有影响，使得其值偏高。
+        # 暗通道的运算可以抹去原始图像中小块的白色物体，所以这样估计的全局大气光值会更准确
         A = np.mean(img, axis=2)[darkImage >= ht[1][lmax]].max()
 
 
