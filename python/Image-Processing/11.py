@@ -1,4 +1,6 @@
 # 维纳滤波
+# https://blog.csdn.net/bluecol/article/details/46242355
+# http://cynhard.com/2018/09/11/LA-Complex-Vectors-and-Matrices/#%E5%A4%8D%E6%95%B0%E7%9A%84%E8%BF%90%E7%AE%97
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -44,6 +46,16 @@ def inverse(input, PSF, eps):
     return result
 
 
+def wiener(input,PSF,eps,K=0.01):        #维纳滤波，K=0.01
+    input_fft = np.fft.fft2(input)
+    PSF_fft = np.fft.fft2(PSF) +eps
+    PSF_fft_1 = np.conj(PSF_fft) /(np.abs(PSF_fft)**2 + K)
+    result = np.fft.ifft2(input_fft * PSF_fft_1)
+    result = np.abs(np.fft.fftshift(result))
+    return result
+
+
+
 if __name__ == "__main__":
     image = cv2.imread('./img/7.jpg')
     image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  
@@ -69,7 +81,9 @@ if __name__ == "__main__":
     plt.show()
 
     # 对添加了随机噪声的图像进行维纳滤波
-
+    result = wiener(blurred_noisy, PSF, 1e-3)
+    plt.imshow(result)
+    plt.show()
 
 
     # 三通道尝试进行 motion_process, 失败
