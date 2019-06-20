@@ -9,9 +9,9 @@ import cv2
 def singleScaleRetinex(img, sigma=300):
     _temp = cv2.GaussianBlur(img, (0, 0), sigma)
     gaussian = np.where(_temp == 0, 0.01, _temp)
-    img_ssr = np.log10(img + 0.01) - np.log10(gaussian)
-    
-    return img_ssr
+    retinex = np.log10(img + 0.01) - np.log10(gaussian)
+
+    return retinex
 
 
 def multiScaleRetinex(img, sigma_list=[15, 80, 200]):
@@ -41,14 +41,60 @@ def MSRCRScaleRetinexSimple(img, dynamic=5, sigma=300):
     max_gimp = mean + dynamic * var
     
     img_ssr = (img_ssr - min_gimp) / (max_gimp - min_gimp) * 255
-
-    # 比如第15号图片的色彩不能很好的还原, 采用 MSRCP 方法尝试
-    
     
     return img_ssr
 
 
-def convert_2d(img, useMethod='single'):
+def simplestColorBalance(img, low_clip, high_clip):    
+
+    total = img.shape[0] * img.shape[1]
+    for i in range(img.shape[2]):
+        # unique 自带排序
+        unique, counts = np.unique(img[:, :, i], return_counts=True)
+        current = 0
+        for u, c in zip(unique, counts):            
+            if float(current) / total < low_clip:
+                low_val = u
+            if float(current) / total < high_clip:
+                high_val = u
+            current += c
+                
+        img[:, :, i] = np.maximum(np.minimum(img[:, :, i], high_val), low_val)
+
+    return img
+
+
+def MSRCP(img, sigma_list=[15, 80, 200], low_clip=0.01, high_clip=0.99):
+    img = np.float64(img) + 1.0
+
+    intensity = np.sum(img, axis=2) / img.shape[2]
+
+    retinex = multiScaleRetinex(intensity, sigma_list)
+
+    intensity = np.expand_dims(intensity, 2)
+    retinex = np.expand_dims(retinex, 2)
+
+    intensity1 = simplestColorBalance(retinex, low_clip, high_clip)
+
+    intensity1 = (intensity1 - np.min(intensity1)) / (np.max(intensity1) - np.min(intensity1)) * 255.0 + 1.0
+
+    img_msrcp = np.zeros_like(img)
+    
+    for y in range(img_msrcp.shape[0]):
+        for x in range(img_msrcp.shape[1]):
+            B = np.max(img[y, x])
+            # 放大因子 A
+            A = np.minimum(256.0 / B, intensity1[y, x, 0] / intensity[y, x, 0])
+            img_msrcp[y, x, 0] = A * img[y, x, 0]
+            img_msrcp[y, x, 1] = A * img[y, x, 1]
+            img_msrcp[y, x, 2] = A * img[y, x, 2]
+
+    return img_msrcp
+
+
+
+def convert(img, useMethod='msrcp'):
+    img = np.array(img, dtype=np.float)
     # 单尺度计算
     if useMethod == 'single':
         img = singleScaleRetinex(img, 300)
@@ -57,27 +103,15 @@ def convert_2d(img, useMethod='single'):
         img = multiScaleRetinex(img, sigma_list=[15, 80, 200])
     elif useMethod == 'msrcrSimple':
         img = MSRCRScaleRetinexSimple(img)
-
-    return img
-
-
-def convert_3d(r, useMethod='msrcrSimple'):
-    r = np.array(r, dtype=np.float)
-    s_dsplit = []
-    for d in range(r.shape[2]):
-        rr = r[:, :, d]
-        ss = convert_2d(rr, useMethod)
-        s_dsplit.append(ss)
-    img = np.dstack(s_dsplit)
-
-    if useMethod == 'single' or useMethod == 'multi':
-        img = (img - np.min(img)) / (np.max(img) - np.min(img)) * 255
-
+    elif useMethod == 'msrcp':
+        img = MSRCP(img)
+    
     # 量化到 0-255，量化公式：R(x,y) = ( Value - Min ) / (Max - Min) * (255-0)
     # （注：无需将Log[R(x,y)]进行Exp函数的运算,而是直接利用Log[R(x,y)]进行线性映射）
-    # for i in range(img.shape[2]):
-    #     img[:, :, i] = (img[:, :, i] - np.min(img[:, :, i])) / (np.max(img[:, :, i]) - np.min(img[:, :, i])) * 255 
-
+    if useMethod == 'single' or useMethod == 'multi':
+        for i in range(img.shape[2]):
+            img[:, :, i] = (img[:, :, i] - np.min(img[:, :, i])) / (np.max(img[:, :, i]) - np.min(img[:, :, i])) * 255.0
+    
     img = np.uint8(
         np.minimum(
             np.maximum(img, 0), 
@@ -90,7 +124,7 @@ def convert_3d(r, useMethod='msrcrSimple'):
 
 if __name__ == "__main__":
     image = cv2.imread('./img/15.jpg')
-    processed = convert_3d(image)
+    processed = convert(image)
 
     cv2.imshow('origin-image', image)
     cv2.imshow('processed-image', processed)

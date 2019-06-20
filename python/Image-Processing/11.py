@@ -57,48 +57,50 @@ def wiener(input,PSF,eps,K=0.01):        #维纳滤波，K=0.01
 
 
 if __name__ == "__main__":
-    image = cv2.imread('./img/7.jpg')
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  
+    image = cv2.imread('./img/17.jpg') / 255
+    cv2.imshow('origin', image)
+    # image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  
     img_h = image.shape[0]
     img_w = image.shape[1]
     
     # 先模拟运动模糊
-    PSF = get_motion_dsf((img_h, img_w), motion_angle=0, motion_dis=50)
-    blurred = np.abs(make_blurred(image, PSF, 1e-3))
-    plt.gray()
-    plt.imshow(blurred)
-    plt.show()
+    PSF = get_motion_dsf((img_h, img_w), motion_angle=0, motion_dis=55)
+    # blurred = np.abs(make_blurred(image, PSF, 1e-3))
+    # plt.gray()
+    # plt.imshow(blurred)
+    # plt.show()
 
-    # 加点随机的噪声
-    blurred_noisy = blurred + 0.1 * blurred.std() * np.random.standard_normal(blurred.shape)
-    plt.imshow(blurred_noisy)
-    plt.show()
+    # # 加点随机的噪声
+    # blurred_noisy = blurred + 0.1 * blurred.std() * np.random.standard_normal(blurred.shape)
+    # plt.imshow(blurred_noisy)
+    # plt.show()
 
-    # 对添加了随机噪声的图像进行逆滤波，只要眼神正常就可以发现，参杂了噪声的情况下
-    # 反卷积会把噪声强烈放大，导致逆滤波失败
-    result = inverse(blurred_noisy, PSF, 1e-3)
-    plt.imshow(result)
-    plt.show()
+    # # 对添加了随机噪声的图像进行逆滤波，只要眼神正常就可以发现，参杂了噪声的情况下
+    # # 反卷积会把噪声强烈放大，导致逆滤波失败
+    # result = inverse(blurred_noisy, PSF, 1e-3)
+    # plt.imshow(result)
+    # plt.show()
 
     # 对添加了随机噪声的图像进行维纳滤波
-    result = wiener(blurred_noisy, PSF, 1e-3)
-    plt.imshow(result)
-    plt.show()
-
-
-    # 三通道尝试进行 motion_process, 失败
-    # PSF = motion_process((img_h, img_w), 10)
-    # result = []
-    # for d in range(image.shape[2]):
-    #     rr = image[:, :, d]
-    #     ss = np.abs(make_blurred(rr, PSF, 1e-3))
-    #     result.append(ss)
-    # result = np.dstack(result)
-    # result[result < 0] = 0
-    # result[result > 255] = 255
+    # result = wiener(image, PSF, 0)
     # plt.gray()
     # plt.imshow(result)
     # plt.show()
+
+
+    # 三通道尝试进行 motion_process, 失败
+    result = []
+    for d in range(image.shape[2]):
+        rr = image[:, :, d]
+        ss = wiener(rr, PSF, 0, K=0.01)
+        result.append(ss)
+    result = np.dstack(result)
+    result[result < 0] = 0
+    result[result > 1] = 1
+
+    cv2.imshow('image', result)
+    cv2.waitKey(0)
+    
 
     
     # 滤波卷积核的形式来进行运动模糊，因为空间域的卷积等于频域的乘积
