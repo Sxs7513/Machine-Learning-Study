@@ -1,6 +1,7 @@
 # https://cloud.tencent.com/developer/article/1011698
 # https://blkstone.github.io/2015/08/20/single-image-haze-removal-using-dark-channel/
 # 何凯明去雾算法
+# 如果目标场景内在的就和大气光类似，比如雪地、白色背景墙、大海等，则由于前提条件就不正确，因此一般无法获得满意的效果，而对于一般的风景照片这个算法能处理的不错
 
 import cv2
 import numpy as np
@@ -107,13 +108,16 @@ class HazeRemoval:
         darkImage = img.min(axis=2)
 
         # # 该算法直接取最大值并取平均作为 A, 但是根据 https://cloud.tencent.com/developer/article/1011698
-        # # 的看法, 这是不可取的
+        # 的看法, 这是不可取的。但是在实践中发现，A值对于去雾的影响不大，但是会影响去雾后的亮度，该方法得到的 A
+        # 值较小，会得到较亮的背景色，所以如果原图本身亮度不足的话，可以考虑用该方法来增加亮度。
         # (i, j) = self._ind2sub(darkImage.shape, darkImage.argmax())
+        # # i, j = np.where(darkImage == np.max(darkImage))
         # # 原始论文中的A最终是取原始像素中的某一个点的像素, 但是该算法中取的符合条件点的平均值作为A的值
         # A = np.mean(img[i, j, :])
 
+        # 如果原图亮度已经不低了，那么用该方法来获得一个较小的 A
         # 取的符合条件的所有点的平均值作为 A 的值
-        bins = 2000
+        bins = 500
         # https://blog.csdn.net/zmshy2128/article/details/53443227
         ht = np.histogram(darkImage, bins)
         # 仔细想想就明白了, 用了很骚的操作来找到前 0.1% 的像素, 然后取它们的三通道平均再找到最大值
@@ -124,7 +128,11 @@ class HazeRemoval:
         # 如果使用传统的方法，直接选取图像中的亮度值最高的点作为全局大气光值，
         # 这样原始有雾图像中的白色物体会对此有影响，使得其值偏高。
         # 暗通道的运算可以抹去原始图像中小块的白色物体，所以这样估计的全局大气光值会更准确
-        A = np.mean(img, axis=2)[darkImage >= ht[1][lmax]].max()
+        # 经实践发现，取 mean 更好，max 会导致 A 值过大，使得背景色过暗，当然如果原图足够亮的话
+        # 那么用 max 也是无所谓的
+        # A = np.mean(img, axis=2)[darkImage >= ht[1][lmax]].max()
+        A = np.mean(img, axis=2)[darkImage >= ht[1][lmax]].mean()
+        print(A)
 
 
         t = 1 - self.omega * darkImage / A       
@@ -145,11 +153,15 @@ class HazeRemoval:
 
 
 if __name__ == '__main__':
-    img = cv2.imread('./img/5.jpeg')
+    img = cv2.imread('./img/12.jpg')
 
     # result = haze_removal(img / 255.0)
     hz = HazeRemoval(img)
     result = hz.haze_removal()
 
-    cv2.imshow('image', result)
+    # 保存的像素必须为真实值
+    # cv2.imwrite('./img/11-quwu.jpg', result * 255)
+
+    cv2.imshow('image-origin', img)
+    cv2.imshow('image-processed', result)
     cv2.waitKey(0) 
