@@ -57,14 +57,14 @@ def wiener(input,PSF,eps,K=0.01):        #维纳滤波，K=0.01
 
 
 if __name__ == "__main__":
-    image = cv2.imread('./img/17.jpg') / 255
+    image = cv2.imread('./img/18.PNG') / 255
     cv2.imshow('origin', image)
     # image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)  
     img_h = image.shape[0]
     img_w = image.shape[1]
     
     # 先模拟运动模糊
-    PSF = get_motion_dsf((img_h, img_w), motion_angle=0, motion_dis=55)
+    PSF = get_motion_dsf((img_h, img_w), motion_angle=180, motion_dis=10)
     # blurred = np.abs(make_blurred(image, PSF, 1e-3))
     # plt.gray()
     # plt.imshow(blurred)

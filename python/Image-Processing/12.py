@@ -26,9 +26,6 @@ def multiScaleRetinex(img, sigma_list=[15, 80, 200]):
 
 
 # https://blog.csdn.net/yayan01/article/details/50129391
-# https://www.cnblogs.com/Imageshop/p/3810402.html
-# http://www.jsjkx.com/CN/article/openArticlePDF.jsp?id=503 => 里面有说 MSRCP
-# https://blog.csdn.net/weixin_38285131/article/details/88097771 => 里面有说 MSRCP
 # 上面连接里面作者说 MSRCR 没有效果, 按照文中提出的方法实践后, 发现
 # dynamic 参数不能用文中所说的 2 或者 3, 20 左右可以得到较好的效果 
 def MSRCRScaleRetinexSimple(img, dynamic=5, sigma=300):
@@ -64,6 +61,10 @@ def simplestColorBalance(img, low_clip, high_clip):
     return img
 
 
+# 15 号图片用其他方法颜色都偏深, 唯独用该方法可以, 这是由于其他方法都存在色偏的问题
+# https://www.cnblogs.com/Imageshop/p/3810402.html
+# http://www.jsjkx.com/CN/article/openArticlePDF.jsp?id=503 => 里面有说 MSRCP
+# https://blog.csdn.net/weixin_38285131/article/details/88097771 => 里面有说 MSRCP
 def MSRCP(img, sigma_list=[15, 80, 200], low_clip=0.01, high_clip=0.99):
     img = np.float64(img) + 1.0
 
