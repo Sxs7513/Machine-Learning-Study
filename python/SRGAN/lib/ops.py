@@ -8,6 +8,28 @@ import tensorflow.contrib.slim as slim
 import pdb
 
 
+def preprocess(image):
+    with tf.name_scope("preprocess"):
+        # [0, 1] => [-1, 1]
+        return image * 2 - 1
+
+
+def deprocess(image):
+    with tf.name_scope("deprocess"):
+        # [-1, 1] => [0, 1]
+        return (image + 1) / 2
+
+
+def preprocessLR(image):
+    with tf.name_scope("preprocessLR"):
+        return tf.identity(image)
+
+
+def deprocessLR(image):
+    with tf.name_scope("deprocessLR"):
+        return tf.identity(image)
+
+
 def conv2(
     batch_input, 
     kernal_size=3, 
@@ -71,8 +93,8 @@ def pixelShuffler(inputs, scale=2):
     input_split = tf.split(inputs, channel_target, axis=3)
     
     # shape 转换用的, 没法一步到位
-    shape1 = [batch_size, h, w, channel_factor // scale, channel_factor // scale]
-    shape2 = [batch_size, h * scale, w * scale, 1]
+    shape_1 = [batch_size, h, w, channel_factor // scale, channel_factor // scale]
+    shape_2 = [batch_size, h * scale, w * scale, 1]
 
     output = tf.concat(
         [phaseShift(x, scale, shape_1, shape_2) for x in input_split],
@@ -82,7 +104,7 @@ def pixelShuffler(inputs, scale=2):
     return output
 
 
-def phaseShift(input, scale, shape_1, shape_2):
+def phaseShift(inputs, scale, shape_1, shape_2):
     x = tf.reshape(inputs, shape_1)
     x = tf.transpose(x, [0, 1, 3, 2, 4])
 

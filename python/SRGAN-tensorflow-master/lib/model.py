@@ -24,7 +24,7 @@ def data_loader(FLAGS):
         if (not os.path.exists(FLAGS.input_dir_LR)) or (not os.path.exists(FLAGS.input_dir_HR)):
             raise ValueError('Input directory not found')
 
-        image_list_LR = os.listdir(FLAGS.input_dir_LR)
+        image_list_LR = os.listdir(FLAGS. )
         image_list_LR = [_ for _ in image_list_LR if _.endswith('.png')]
         if len(image_list_LR)==0:
             raise Exception('No png files in the input directory')
