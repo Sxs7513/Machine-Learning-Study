@@ -1562,6 +1562,7 @@ class MaskRCNN():
             # predict
 
             # 获得针对 rois 的分类与边框回归的预测值
+            # 在这里会进行RoI Pooling 提取特征，接上 fc 进行预测
             # mrcnn_class_logits => [N, 200, num_classes]
             # mrcnn_class => [N, 200, num_classes]
             # mrcnn_bbox => [N, 200, num_classes, 4]

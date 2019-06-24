@@ -1,0 +1,196 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import torch.utils.data as data
+import numpy as np
+import torch
+import json
+import cv2
+import os
+from utils.image import flip, color_aug
+from utils.image import get_affine_transform, affine_transform
+from utils.image import gaussian_radius, draw_umich_gaussian, draw_msra_gaussian
+from utils.image import draw_dense_reg
+import math
+
+
+class CTDetDataset(data.Dataset):
+    def _coco_box_to_bbox(self, box):
+        bbox = np.array(
+            [box[0], box[1], box[0] + box[2], box[1] + box[3]],
+            dtype=np.float32
+        )
+        return bbox
+
+    def _get_border(self, border, size):
+        i = 1
+        while size - border // i <= border // i:
+            i *= 2
+        return border // i
+
+    # 每次如何读数据
+    def __getitem__(self, index):
+        img_id = self.images[index]
+        file_name = self.coco.loadImgs(ids=[img_id])[0]['file_name']
+        # 图片路径
+        img_path = os.path.join(self.img_dir, file_name)
+        ann_ids = self.coco.getAnnIds(imgIds=[img_id])
+        anns = self.coco.loadAnns(ids=ann_ids)
+        num_objs = min(len(anns), self.max_objs)
+
+        img = cv2.imread(img_path)
+
+        height, width = img.shape[0], img.shape[1]
+        c = np.array([img.shape[1] / 2., img.shape[0] / 2.], dtype=np.float32)
+        if self.opt.keep_res:
+            input_h = (height | self.opt.pad) + 1
+            input_w = (width | self.opt.pad) + 1
+            s = np.array([input_w, input_h], dtype=np.float32)
+        else:
+            # 图片最长的边的长度，仿射变换的拉伸度
+            s = max(img.shape[0], img.shape[1]) * 1.0
+            # 输入网络中的图片的大小要求
+            input_h, input_w = self.opt.input_h, self.opt.input_w
+
+        flipped = False
+        if self.split == 'train':
+            if not self.opt.not_rand_crop:
+                # 随机拉伸度
+                s = s * np.random.choice(np.arange(0.6, 1.4, 0.1))
+                # 图片 128 的情况下，值都为 128
+                w_border = self._get_border(128, img.shape[1])
+                h_border = self._get_border(128, img.shape[0])
+                # 仿射变换 crop 的矩阵，中心在一定范围内
+                c[0] = np.random.randint(low=w_border,
+                                         high=img.shape[1] - w_border)
+                c[1] = np.random.randint(low=h_border,
+                                         high=img.shape[0] - h_border)
+            else:
+                sf = self.opt.scale
+                cf = self.opt.shift
+                c[0] += s * np.clip(np.random.randn() * cf, -2 * cf, 2 * cf)
+                c[1] += s * np.clip(np.random.randn() * cf, -2 * cf, 2 * cf)
+                s = s * np.clip(np.random.randn() * sf + 1, 1 - sf, 1 + sf)
+
+            if np.random.random() < self.opt.flip:
+                flipped = True
+                img = img[:, ::-1, :]
+                c[0] = width - c[0] - 1
+
+        # 生成仿射变换矩阵，不进行旋转
+        trans_input = get_affine_transform(c, s, 0, [input_w, input_h])
+        # 对图片进行变换
+        inp = cv2.warpAffine(img,
+                             trans_input, (input_w, input_h),
+                             flags=cv2.INTER_LINEAR)
+        # 像素值归一化
+        inp = (inp.astype(np.float32) / 255.)
+        #
+        if self.split == 'train' and not self.opt.no_color_aug:
+            color_aug(self._data_rng, inp, self._eig_val, self._eig_vec)
+        inp = (inp - self.mean) / self.std
+        # 通道维度提到最前
+        inp = inp.transpose(2, 0, 1)
+
+        # 计算经过 backbone 网络后的特征图大小
+        output_h = input_h // self.opt.down_ratio
+        output_w = input_w // self.opt.down_ratio
+        num_classes = self.num_classes
+        trans_output = get_affine_transform(c, s, 0, [output_w, output_h])
+
+        # 初始热力图
+        hm = np.zeros((num_classes, output_h, output_w), dtype=np.float32)
+        # box宽高
+        wh = np.zeros((self.max_objs, 2), dtype=np.float32)
+        dense_wh = np.zeros((2, output_h, output_w), dtype=np.float32)
+        reg = np.zeros((self.max_objs, 2), dtype=np.float32)
+        ind = np.zeros((self.max_objs), dtype=np.int64)
+        reg_mask = np.zeros((self.max_objs), dtype=np.uint8)
+        cat_spec_wh = np.zeros((self.max_objs, num_classes * 2),
+                               dtype=np.float32)
+        cat_spec_mask = np.zeros((self.max_objs, num_classes * 2),
+                                 dtype=np.uint8)
+
+        draw_gaussian = draw_msra_gaussian if self.opt.mse_loss else \
+                        draw_umich_gaussian
+
+        gt_det = []
+        for k in range(num_objs):
+            ann = anns[k]
+            # box 的左上角与右下角原始坐标
+            bbox = self._coco_box_to_bbox(ann['bbox'])
+            # box 对应的类别id
+            cls_id = int(self.cat_ids[ann['category_id']])
+            if flipped:
+                bbox[[0, 2]] = width - bbox[[2, 0]] - 1
+            # 左上角坐标经过变换后的位置
+            bbox[:2] = affine_transform(bbox[:2], trans_output)
+            # 右下角坐标经过变换后的位置
+            bbox[2:] = affine_transform(bbox[2:], trans_output)
+            # x 坐标 clip，不能超过 output
+            bbox[[0, 2]] = np.clip(bbox[[0, 2]], 0, output_w - 1)
+            # y 坐标同上
+            bbox[[1, 3]] = np.clip(bbox[[1, 3]], 0, output_h - 1)
+            # box 高与宽
+            h, w = bbox[3] - bbox[1], bbox[2] - bbox[0]
+            if h > 0 and w > 0:
+                # 计算概率半径
+                radius = gaussian_radius((math.ceil(h), math.ceil(w)))
+                radius = max(0, int(radius))
+                radius = self.opt.hm_gauss if self.opt.mse_loss else radius
+                # box 中心点
+                ct = np.array([(bbox[0] + bbox[2]) / 2,
+                               (bbox[1] + bbox[3]) / 2],
+                              dtype=np.float32)
+                ct_int = ct.astype(np.int32)
+                # 绘制该 box 的热力图
+                draw_gaussian(hm[cls_id], ct_int, radius)
+                # 宽高赋值
+                wh[k] = 1. * w, 1. * h
+                # 
+                ind[k] = ct_int[1] * output_w + ct_int[0]
+                # 偏置量
+                reg[k] = ct - ct_int
+                reg_mask[k] = 1
+                cat_spec_wh[k, cls_id * 2:cls_id * 2 + 2] = wh[k]
+                cat_spec_mask[k, cls_id * 2:cls_id * 2 + 2] = 1
+                if self.opt.dense_wh:
+                    draw_dense_reg(dense_wh, hm.max(axis=0), ct_int, wh[k], radius)
+                # 
+                gt_det.append([
+                    ct[0] - w / 2, ct[1] - h / 2, ct[0] + w / 2, ct[1] + h / 2,
+                    1, cls_id
+                ])
+
+        ret = {
+            # 经变换后的图片，[3, 512, 512]
+            'input': inp,
+            # 热力图，[80, 128, 128]
+            'hm': hm,
+            # 偏置量，[max_objs]
+            'reg_mask': reg_mask,
+            # 
+            'ind': ind,
+            # 该图里所有 box 的宽高 [max_objs, 2]
+            'wh': wh
+        }
+        if self.opt.dense_wh:
+            hm_a = hm.max(axis=0, keepdims=True)
+            dense_wh_mask = np.concatenate([hm_a, hm_a], axis=0)
+            ret.update({'dense_wh': dense_wh, 'dense_wh_mask': dense_wh_mask})
+            del ret['wh']
+        elif self.opt.cat_spec_wh:
+            ret.update({
+                'cat_spec_wh': cat_spec_wh,
+                'cat_spec_mask': cat_spec_mask
+            })
+            del ret['wh']
+        if self.opt.reg_offset:
+            ret.update({'reg': reg})
+        if self.opt.debug > 0 or not self.split == 'train':
+            gt_det = np.array(gt_det, dtype=np.float32) if len(gt_det) > 0 else \
+                     np.zeros((1, 6), dtype=np.float32)
+            meta = {'c': c, 's': s, 'gt_det': gt_det, 'img_id': img_id}
+            ret['meta'] = meta
+        return ret

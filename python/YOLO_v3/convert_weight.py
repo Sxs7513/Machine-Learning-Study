@@ -109,7 +109,21 @@ def main(argv):
         saver = tf.train.Saver(var_list=tf.global_variables(scope='yolov3'))
 
         if flags.convert:
-            pass
+            if not os.path.exists(flags.weights_path):
+                url = 'https://github.com/YunYang1994/tensorflow-yolov3/releases/download/v1.0/yolov3.weights'
+                for i in range(3):
+                    time.sleep(1)
+                    print("=> %s does not exists ! " %flags.weights_path)
+                print("=> It will take a while to download it from %s" %url)
+                print('=> Downloading yolov3 weights ... ')
+                wget.download(url, flags.weights_path)
+
+            # 从权重文件中把权重提取出来，赋值给 yolov3 下的张量
+            load_ops = utils.load_weights(tf.global_variables(scope='yolov3'), flags.weights_path)
+            sess.run(load_ops)
+            # 然后用 tensorflow 保存即可
+            save_path = saver.save(sess, save_path=flags.ckpt_file)
+            print('=> model saved in path: {}'.format(save_path))
         
         if flags.freeze:
             saver.restore(sess, flags.ckpt_file)
