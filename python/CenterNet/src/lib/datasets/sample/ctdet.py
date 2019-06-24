@@ -99,7 +99,7 @@ class CTDetDataset(data.Dataset):
         num_classes = self.num_classes
         trans_output = get_affine_transform(c, s, 0, [output_w, output_h])
 
-        # 初始热力图
+        # 初始热力图，大小是经过 backbone 网络后的特征图的大小
         hm = np.zeros((num_classes, output_h, output_w), dtype=np.float32)
         # box宽高
         wh = np.zeros((self.max_objs, 2), dtype=np.float32)
@@ -139,10 +139,11 @@ class CTDetDataset(data.Dataset):
                 radius = gaussian_radius((math.ceil(h), math.ceil(w)))
                 radius = max(0, int(radius))
                 radius = self.opt.hm_gauss if self.opt.mse_loss else radius
-                # box 中心点
+                # box 中心点, 浮点数
                 ct = np.array([(bbox[0] + bbox[2]) / 2,
                                (bbox[1] + bbox[3]) / 2],
                               dtype=np.float32)
+                # box 中心点，整数
                 ct_int = ct.astype(np.int32)
                 # 绘制该 box 的热力图
                 draw_gaussian(hm[cls_id], ct_int, radius)
@@ -157,7 +158,7 @@ class CTDetDataset(data.Dataset):
                 cat_spec_mask[k, cls_id * 2:cls_id * 2 + 2] = 1
                 if self.opt.dense_wh:
                     draw_dense_reg(dense_wh, hm.max(axis=0), ct_int, wh[k], radius)
-                # 
+                # 左上角右下角位置，类别id
                 gt_det.append([
                     ct[0] - w / 2, ct[1] - h / 2, ct[0] + w / 2, ct[1] + h / 2,
                     1, cls_id
