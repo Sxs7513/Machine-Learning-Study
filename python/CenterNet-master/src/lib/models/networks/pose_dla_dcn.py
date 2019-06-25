@@ -13,7 +13,7 @@ from torch import nn
 import torch.nn.functional as F
 import torch.utils.model_zoo as model_zoo
 
-from .DCNv2.dcn_v2 import DCN
+# from .DCNv2.dcn_v2 import DCN
 
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
@@ -491,3 +491,6 @@ def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
                  head_conv=head_conv)
   return model
 
+
+if __name__ == '__main__':
+    print(dla34(False))

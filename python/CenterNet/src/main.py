@@ -28,6 +28,7 @@ def main(opt):
 
     print('Creating model...')
     # TODO create model
+    model = create_model(opt.arch, opt.heads, opt.head_conv)
 
 
     print('Setting up data...')
