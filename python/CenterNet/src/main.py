@@ -1,3 +1,7 @@
+# https://arxiv.org/abs/1904.07850
+# http://openaccess.thecvf.com/content_cvpr_2018/papers/Yu_Deep_Layer_Aggregation_CVPR_2018_paper.pdf
+# https://www.zhihu.com/question/57493889
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function

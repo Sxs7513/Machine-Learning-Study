@@ -17,6 +17,7 @@ BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
 
 
+# 基本的残差块
 class BasicBlock(nn.Module):
     def __init__(self, inplanes, planes, stride=1, dilation=1):
         super(BasicBlock, self).__init__()
@@ -40,6 +41,7 @@ class BasicBlock(nn.Module):
         self.stride = stride
 
     def forward(self, x, residual=None):
+        # 必须要有个残差
         if residual is None:
             residual = x
 
@@ -51,7 +53,6 @@ class BasicBlock(nn.Module):
         out = self.bn2(out)
 
         # 这俩维度可能不一样，但是可以广播
-        # 所以输出的维度与 residual 永远一致
         out += residual
         out = self.relu(out)
 
@@ -172,8 +173,8 @@ class Tree(nn.Module):
         # 大树的话上一个树的输出也要作为残差输入到右树
         if self.level_root:
             children.append(bottom)
-        # 左树的输出，注意要加上x映射的残差块，这块和论文中的图不太一样
-        # 论文中两个树相连的部分那块看起来像是没有残差，但是该项目作者加了
+        # 左树的输出，注意要加上x映射的残差块，论文中画的不太对
+        # 有误导之嫌疑
         x1 = self.tree1(x, residual)
         # 最小树的时候, 直接计算该树的最终输出
         if self.levels == 1:
@@ -187,6 +188,8 @@ class Tree(nn.Module):
         return x
 
 
+# DLA 基础网络，注意只是文章图6-d 的最左侧部分，即 4-8-16-32 那一列
+# 这文章写的...太简略了
 class DLA(nn.Module):
     def __init__(self,
                  levels,
@@ -301,6 +304,111 @@ def dla34(pretrained=True, **kwargs):
     return model
 
 
+# https://github.com/fyu/drn/issues/41
+def fill_up_weights(up):
+    return
+
+
+class DeformConv(nn.Module):
+    def __init__(self, chi, cho):
+        super(DeformConv, self).__init__()
+        self.actf = nn.Sequential(nn.BatchNorm2d(cho, momentum=BN_MOMENTUM),
+                                  nn.ReLU(inplace=True))
+        # self.conv = DCN
+
+
+# 输出图中上三角型的斜边的4个方块的某个方块的输出
+class IDAUp(nn.Module):
+    # o => 256 channels => [256, 512] up_f => [1, 2]
+    # 参数作用具体看 DLAUp 里面
+    def __init__(self, o, channels, up_f):
+        super(IDAUp, self).__init__()
+        # 要进行
+        for i in range(1, len(channels)):
+            c = channels[i]
+            f = int(up_f[i])
+
+            # TODO DeformConv
+            proj = DeformConv(c, o)
+            node = DeformConv(o, o)
+
+            # TODO 换成 upsampling
+            # 由于 pytorch 之前的 upsampling 有不严谨的地方所以作者
+            # 自己写了一个双线性差值的上采样，现在已经修复
+            up = nn.ConvTranspose2d(o,
+                                    o,
+                                    f * 2,
+                                    stride=f,
+                                    padding=f // 2,
+                                    output_padding=0,
+                                    groups=o,
+                                    bias=False)
+            fill_up_weights(up)
+
+            setattr(self, 'proj_' + str(i), proj)
+            setattr(self, 'up_' + str(i), up)
+            setattr(self, 'node_' + str(i), node)
+
+    def forward(self, layers, startp, endp):
+        # 实在没法解释了。。。
+        for i in range(startp + 1, endp):
+            upsample = getattr(self, 'up_' + str(i - startp))
+            project = getattr(self, 'proj_' + str(i - startp))
+            layers[i] = upsample(project(layers[i]))
+            node = getattr(self, 'node_' + str(i - startp))
+            layers[i] = node(layers[i] + layers[i - 1])
+
+
+# 获得图中上三角型的斜边的4个方块的输出张量，我的天。。。
+class DLAUp(nn.Module):
+    def __init__(self, startp, channels, scales, in_channels=None):
+        super(DLAUp, self).__init__()
+        # 2 即 level2
+        self.startp = startp
+        # in_channels 是作为一个副本
+        if in_channels is None:
+            in_channels = channels
+        self.channels = channels
+        # [64, 128, 256, 512]
+        channels = list(channels)
+        # [1, 2, 4, 8]
+        scales = np.array(scales, dtype=int)
+        # 倒着来，从 level4 开始，为对角线上面的绿色块生成它们的 IDAUp 层
+        for i in range(len(channels) - 1):
+            # -2, -3, -4
+            j = -i - 2
+            setattr(
+                self,
+                'ida_{}'.format(i),
+                IDAUp(
+                    # 哪一层要进行 IDAUp
+                    channels[j],
+                    # 下层的要拖过来一起相加
+                    # 1个，2个，3个
+                    in_channels[j:],
+                    # 下层的分别要上采样多少倍，来满足相加
+                    scales[j:] // scales[j]))
+
+            # 此时下层已经上采样完毕了，它们与该层的 scale 可以一样了
+            scales[(j + 1):] = scales[j]
+            # 同上
+            # TODO: in_channels[(j + 1):] = channels[j] 达不到一样的效果么？？
+            in_channels[(j + 1):] = [channels[j] for _ in channels[(j + 1):]]
+
+    def forward(self, layers):
+        # level5 直接提出来，因为它自成一行
+        out = [layers[-1]]
+        # 从 ida_0 开始即图中倒数第二行
+        for i in range(len(layers) - self.startp - 1):
+            ida = getattr(self, 'ida_{}'.format(i))
+            # 范围分别是 4-6, 3-6, 2-6，实际上是 5-6，4-6，3-6
+            ida(layers, len(layers) - i - 2, len(layers))
+            out.insert(0, layers[-1])
+
+        # out 里总共有4个张量，即对角线上的4个张量
+        return out
+
+
 class DLASeg(nn.Module):
     def __init__(self,
                  base_name,
@@ -313,8 +421,48 @@ class DLASeg(nn.Module):
                  out_channel=0):
         super(DLASeg, self).__init__()
         assert down_ratio in [2, 4, 6, 8]
+        # 计算在基础 DLA 网络中, 从多少 level 开始进行 upgrade
+        # 一般是从 level2 开始
         self.first_level = int(np.log2(down_ratio))
         self.last_level = last_level
+        # 基础的 DLA 网络, 然后下面才要开始正式表演
+        self.base = globals()[base_name](pretrained=pretrained)
+        channels = self.base.channels
+        # 计算 level2 level3 level4 level5 分别要 upgrade 多少
+        # 才能和 level2 保持一样大小
+        # 结果为 [1, 2, 4, 8]
+        scales = [2**i for i in range(len(channels[self.first_level:]))]
+        # 获得图中对角线上面的块输出的张量
+        # len(self.dla_up) = 4
+        self.dla_up = DLAUp(self.first_level, channels[self.first_level:],
+                            scales)
+
+        # 定义总的输出的节点的通道数
+        if out_channel == 0:
+            out_channel = channels[self.first_level]
+
+        self.ida_up = IDAUp(
+            # 值为 128
+            out_channel,
+            # 值为 [64, 128, 256]
+            channels[self.first_level:self.last_level],
+            # 值为 [1, 2, 4]
+            [2**i for i in range(self.last_level - self.first_level)])
+
+    def forward(self, x):
+        # level0 => [N, 16, 512, 512]
+        # level1 => [N, 32, 256, 256]
+        # level2 => [N, 64, 128, 128]
+        # level3 => [N, 128, 64, 64]
+        # level4 => [N, 256, 32, 32]
+        # level5 => [N, 512, 16, 16]
+        x = self.base(x)
+        # [[N, 64, 128, 128], [N, 128, 64, 64], [N, 256, 32, 32], [N, 512, 16, 16]]
+        x = self.dla_up(x)
+
+        y = []
+        for i in range(self.last_level - self.first_level):
+            y.append(x[i].clone())
 
 
 def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
