@@ -337,7 +337,7 @@ class IDAUp(nn.Module):
     # 参数作用具体看 DLAUp 里面
     def __init__(self, o, channels, up_f):
         super(IDAUp, self).__init__()
-        # 要进行
+        # 要进行上采样(作用用的反卷积以及DeformConv)
         for i in range(1, len(channels)):
             c = channels[i]
             f = int(up_f[i])
@@ -370,7 +370,7 @@ class IDAUp(nn.Module):
             setattr(self, 'node_' + str(i), node)
 
     def forward(self, layers, startp, endp):
-        # 实在没法解释了。。。
+        # 累加，最后的即为当前需要的
         for i in range(startp + 1, endp):
             upsample = getattr(self, 'up_' + str(i - startp))
             project = getattr(self, 'proj_' + str(i - startp))
@@ -423,6 +423,7 @@ class DLAUp(nn.Module):
             ida = getattr(self, 'ida_{}'.format(i))
             # 范围分别是 4-6, 3-6, 2-6，实际上是 5-6，4-6，3-6
             ida(layers, len(layers) - i - 2, len(layers))
+            # 每次都是 layers 最后一个是对角线上的节点
             out.insert(0, layers[-1])
 
         # out 里总共有4个张量，即对角线上的4个张量
@@ -441,7 +442,7 @@ class DLASeg(nn.Module):
                  out_channel=0):
         super(DLASeg, self).__init__()
         assert down_ratio in [2, 4, 6, 8]
-        # 计算在基础 DLA 网络中, 从多少 level 开始进行 upgrade
+        # 计算在基础 DLA 网络中, 以哪级level为基准
         # 一般是从 level2 开始
         self.first_level = int(np.log2(down_ratio))
         self.last_level = last_level
@@ -460,7 +461,8 @@ class DLASeg(nn.Module):
         # 定义总的输出的节点的通道数
         if out_channel == 0:
             out_channel = channels[self.first_level]
-
+        
+        # 最右侧的上面三个累加，最后那个即为需要的
         self.ida_up = IDAUp(
             # 值为 128
             out_channel,
@@ -468,6 +470,16 @@ class DLASeg(nn.Module):
             channels[self.first_level:self.last_level],
             # 值为 [1, 2, 4]
             [2**i for i in range(self.last_level - self.first_level)])
+
+        self.heads = heads
+        for head in self.heads:
+            classes = self.heads[head]
+            is head_conv > 0:
+                pass
+            else:
+                
+
+
 
     def forward(self, x):
         # level0 => [N, 16, 512, 512]
@@ -481,8 +493,17 @@ class DLASeg(nn.Module):
         x = self.dla_up(x)
 
         y = []
+        # 这里有个问题，即图中右下角的那个块不会进入计算，很奇怪
         for i in range(self.last_level - self.first_level):
+            # clone 的用处
             y.append(x[i].clone())
+        # y[-1] => [N, 256, 128, 128]
+        self.ida_up(y, 0, len(y))
+
+        z = {}
+        for head in heads:
+            z[head] = self.__getattr__(head)(y[-1])
+        return [z]
 
 
 def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
