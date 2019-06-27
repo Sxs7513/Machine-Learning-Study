@@ -304,6 +304,13 @@ def dla34(pretrained=True, **kwargs):
     return model
 
 
+def fill_fc_weights(layers):
+    for m in layers.modules():
+        if isinstance(m, nn.Conv2d):
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+
 # https://github.com/fyu/drn/issues/41
 # https://zhuanlan.zhihu.com/p/32414293
 def fill_up_weights(up):
@@ -318,8 +325,14 @@ def fill_up_weights(up):
         for j in range(w.size(3)):
             # 修改第一个 batch 第一个通道的核即可
             w[0, 0, i, j] = \
-                (1 - math.fabs(()))
+                 (1 - math.fabs(i / f - c)) * (1 - math.fabs(j / f - c))
     for c in range(1, w.size(0)):
+        # 第一维度是卷积核的深度
+        # 只修改第一个卷积的值，让它们
+        # 初始化为双线性插值需要的权重
+        # 至于为什么不把所有的核心所有的深度都
+        # 变为一样的，可能是为了保留多样性吧
+        # 以免无法训练
         w[c, 0, :, :] = w[0, 0, :, :]
 
 
@@ -328,7 +341,12 @@ class DeformConv(nn.Module):
         super(DeformConv, self).__init__()
         self.actf = nn.Sequential(nn.BatchNorm2d(cho, momentum=BN_MOMENTUM),
                                   nn.ReLU(inplace=True))
-        # self.conv = DCN
+        self.conv = DCN(chi, cho, kernel_size=(3,3), stride=1, padding=1, dilation=1, deformable_groups=1)
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.actf(x)
+        return x
 
 
 # 输出图中上三角型的斜边的4个方块的某个方块的输出
@@ -474,12 +492,17 @@ class DLASeg(nn.Module):
         self.heads = heads
         for head in self.heads:
             classes = self.heads[head]
-            is head_conv > 0:
+            if head_conv > 0:
                 pass
             else:
-                
-
-
+                fc = nn.Conv2d(channels[self.first_level], classes, 
+                   kernel_size=final_kernel, stride=1, 
+                   padding=final_kernel // 2, bias=True)
+                if 'hm' in head:
+                    fc.bias.data.fill_(-2.19)
+                else:
+                    fill_fc_weights(fc)
+            self.__setattr__(head, fc)
 
     def forward(self, x):
         # level0 => [N, 16, 512, 512]
@@ -533,4 +556,5 @@ if __name__ == '__main__':
         padding=1,
         output_padding=0,
     )
-    print(up.weight.data.size())
+    fill_up_weights(up)
+    print(up.weight.data)

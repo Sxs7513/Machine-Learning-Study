@@ -119,7 +119,7 @@ class Conv2D(object):
 
 
 def im2col(image, ksize, stride):
-    # image is a 4d tensor([batchsize, width ,height, channel])
+    # image is a 4d tensor([batchsize, width ,height, in-channel])
     image_col = []
     for i in range(0, image.shape[1] - ksize + 1, stride):
         for j in range(0, image.shape[2] - ksize + 1, stride):
