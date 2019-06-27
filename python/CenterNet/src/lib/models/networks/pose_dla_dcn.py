@@ -305,8 +305,22 @@ def dla34(pretrained=True, **kwargs):
 
 
 # https://github.com/fyu/drn/issues/41
+# https://zhuanlan.zhihu.com/p/32414293
 def fill_up_weights(up):
-    return
+    w = up.weight.data
+    # w.size(2) 就是 kernel—size
+    # f 就是文中的 upscale_factor
+    f = math.ceil(w.size(2) / 2)
+    # 等于文中的 centre_location / upscale_factor 
+    c = (2 * f - f % 2 - 1) / (2. * f) 
+
+    for i in range(w.size(2)):
+        for j in range(w.size(3)):
+            # 修改第一个 batch 第一个通道的核即可
+            w[0, 0, i, j] = \
+                (1 - math.fabs(()))
+    for c in range(1, w.size(0)):
+        w[c, 0, :, :] = w[0, 0, :, :]
 
 
 class DeformConv(nn.Module):
@@ -335,14 +349,20 @@ class IDAUp(nn.Module):
             # TODO 换成 upsampling
             # 由于 pytorch 之前的 upsampling 有不严谨的地方所以作者
             # 自己写了一个双线性差值的上采样，现在已经修复
+
+            # pytorch 的反卷积是如何实现的看下面的链接
+            # https://blog.csdn.net/qq_27261889/article/details/86304061
+
             up = nn.ConvTranspose2d(o,
                                     o,
-                                    f * 2,
+                                    kernel_size=f * 2,
                                     stride=f,
                                     padding=f // 2,
                                     output_padding=0,
                                     groups=o,
                                     bias=False)
+            # 修正反卷积中的卷积核的权重，来达到双线性差值的效果
+            # https://zhuanlan.zhihu.com/p/32414293
             fill_up_weights(up)
 
             setattr(self, 'proj_' + str(i), proj)
@@ -466,12 +486,30 @@ class DLASeg(nn.Module):
 
 
 def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
-    return
+    model = DLASeg('dla{}'.format(num_layers),
+                   heads,
+                   pretrained=True,
+                   down_ratio=down_ratio,
+                   final_kernel=1,
+                   last_level=5,
+                   head_conv=head_conv)
+
+    return model
 
 
 if __name__ == '__main__':
-    x = torch.ones(2, 3, 512, 512)
-    net = dla34(False)
-    y = net(x)
-    for output in y:
-        print(output.size())
+    # x = torch.ones(2, 3, 512, 512)
+    # net = dla34(False)
+    # y = net(x)
+    # for output in y:
+    #     print(output.size())
+
+    up = nn.ConvTranspose2d(
+        3,
+        5,
+        kernel_size=4,
+        stride=2,
+        padding=1,
+        output_padding=0,
+    )
+    print(up.weight.data.size())

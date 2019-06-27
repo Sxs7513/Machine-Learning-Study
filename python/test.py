@@ -1,35 +1,24 @@
 import numpy as np
+import cv2
+from numpy import  zeros
+from scipy.linalg import toeplitz
 
-def gaussian_radius(det_size, min_overlap=0.7):
-  height, width = det_size
+def upsample_filt(size):
+    """ Make a 2D bilinear kernel suitable for upsampling of the given (h, w) size. """
+    factor = (size + 1) // 2
+    if size % 2 == 1:
+        center = factor - 1
+    else:
+        center = factor - 0.5
+    og = np.ogrid[:size, :size]
+    return (1 - abs(og[0] - center) / factor) * \
+           (1 - abs(og[1] - center) / factor)
 
-  a1  = 1
-  b1  = (height + width)
-  c1  = width * height * (1 - min_overlap) / (1 + min_overlap)
-  sq1 = np.sqrt(b1 ** 2 - 4 * a1 * c1)
-  r1  = (b1 + sq1) / 2
 
-  a2  = 4
-  b2  = 2 * (height + width)
-  c2  = (1 - min_overlap) * width * height
-  sq2 = np.sqrt(b2 ** 2 - 4 * a2 * c2)
-  r2  = (b2 + sq2) / 2
 
-  a3  = 4 * min_overlap
-  b3  = -2 * min_overlap * (height + width)
-  c3  = (min_overlap - 1) * width * height
-  sq3 = np.sqrt(b3 ** 2 - 4 * a3 * c3)
-  r3  = (b3 + sq3) / 2
-  return min(r1, r2, r3)
+# kenal = upsample_filt(3)
+# print(kenal)
+# mat = np.array([[ 1.,  2.,  0.],
+#                   [ 3.,  4.,  0.],
+#                   [ 0.,  0.,  0.]])
 
-print(gaussian_radius((200, 100)))
-
-def gaussian2D(shape, sigma=1):
-    m, n = [(ss - 1.) / 2. for ss in shape]
-    y, x = np.ogrid[-m:m+1,-n:n+1]
-    
-    h = np.exp(-(x * x + y * y) / (2 * sigma * sigma))
-    h[h < np.finfo(h.dtype).eps * h.max()] = 0
-    return h
-
-print(gaussian2D((9, 9)))
