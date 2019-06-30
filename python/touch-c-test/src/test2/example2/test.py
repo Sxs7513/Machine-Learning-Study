@@ -1,0 +1,2 @@
+import Extest
+Extest.test()
