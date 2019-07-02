@@ -26,12 +26,16 @@ inline int GET_BLOCKS(const int N)
   return (N + CUDA_NUM_THREADS - 1) / CUDA_NUM_THREADS;
 }
 
-
+// 由于偏移很难是整数，所以采用双线性差值取到偏移之后的值
+// https://blog.csdn.net/xbinworld/article/details/65660665
 __device__ float dmcn_im2col_bilinear(const float *bottom_data, const int data_width,
                                       const int height, const int width, float h, float w)
 {
+  // 向下取整
   int h_low = floor(h);
   int w_low = floor(w);
+  // 到此左上角和右下角的位置都以及确定
+  // 那么周围四个点的位置也都确定了下来
   int h_high = h_low + 1;
   int w_high = w_low + 1;
 
@@ -39,19 +43,23 @@ __device__ float dmcn_im2col_bilinear(const float *bottom_data, const int data_w
   float lw = w - w_low;
   float hh = 1 - lh, hw = 1 - lw;
 
+  // 左上 h_low， w_low 对应的点，如果超出边界则为 0
   float v1 = 0;
   if (h_low >= 0 && w_low >= 0)
     v1 = bottom_data[h_low * data_width + w_low];
+  // 右上 h_low, w_high, 如果超出边界则为 0
   float v2 = 0;
   if (h_low >= 0 && w_high <= width - 1)
     v2 = bottom_data[h_low * data_width + w_high];
+  // 左下
   float v3 = 0;
   if (h_high <= height - 1 && w_low >= 0)
     v3 = bottom_data[h_high * data_width + w_low];
+  // 右下
   float v4 = 0;
   if (h_high <= height - 1 && w_high <= width - 1)
     v4 = bottom_data[h_high * data_width + w_high];
-
+  // 
   float w1 = hh * hw, w2 = hh * lw, w3 = lh * hw, w4 = lh * lw;
 
   float val = (w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4);
@@ -175,7 +183,7 @@ __global__ void modulated_deformable_im2col_gpu_kernel(const int n,
     const int h_in = h_col * stride_h - pad_h;
     const int w_in = w_col * stride_w - pad_w;
 
-    //  float *data_col_ptr = data_col + ((c_col * batch_size + b_col) * height_col + h_col) * width_col + w_col;
+    // float *data_col_ptr = data_col + ((c_col * batch_size + b_col) * height_col + h_col) * width_col + w_col;
     // data_col 是数组指针(matrix 本质是数组), 所以修改它的指向, 指向 im2col 矩阵某个 kernel 的起始点
     // im2col 行数是 kernel-size, 列数实际上就是kernel在图像上滑动的次数即输出图的size
     float *data_col_ptr = data_col + ((b_col * num_channels * kernel_w * kernel_h + c_col) * height_col + h_col) * width_col + w_col;
@@ -216,9 +224,10 @@ __global__ void modulated_deformable_im2col_gpu_kernel(const int n,
           // 
           val = dmcn_im2col_bilinear(data_im_ptr, width, height, width, h_im, w_im);
         }
+        // 乘置信度
         *data_col_ptr = val * mask;
         // data_col_ptr += batch_size * height_col * width_col;
-        // 该点
+        // 该点结束后，移动到下个点
         data_col_ptr += height_col * width_col;
       }
     }
