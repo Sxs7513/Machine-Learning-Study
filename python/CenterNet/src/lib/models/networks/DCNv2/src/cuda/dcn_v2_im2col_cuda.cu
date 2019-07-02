@@ -11,11 +11,16 @@
 #include <THC/THCDeviceUtils.cuh>
 
 #define CUDA_KERNEL_LOOP(i, n)                          \
+  // 第几个 block * block 的大小 + block中第几个线程
   for (int i = blockIdx.x * blockDim.x + threadIdx.x;   \
       i < (n);                                          \
+      // 每次加所有线程的数量，因为有时候 n 会大于线程数量
+      // 所以可能有些线程要串行
       i += blockDim.x * gridDim.x)
 
+// 每个block中有多少个线程
 const int CUDA_NUM_THREADS = 1024;
+// 计算 block 的数量
 inline int GET_BLOCKS(const int N)
 {
   return (N + CUDA_NUM_THREADS - 1) / CUDA_NUM_THREADS;
@@ -138,42 +143,66 @@ __global__ void modulated_deformable_im2col_gpu_kernel(const int n,
   {
     // NOTE(CharlesShang): different from Dai Jifeng's MXNet implementation, col_buffer is of shape (c*kw*kh, N, oh, ow)
     // here columns is of shape (N, c*kw*kh, oh * ow), need to adapt axis
+    // data_col => [N, c*kw*kh, oh * ow]
+    // data_offset => [N, 2 * kernel_h * kernel_w * 输入通道分成的份数(deformable_group), oh * ow]
+    // data_mask_ptr => [N, 1 * kernel_h * kernel_w * 输入通道分成的份数(deformable_group), oh * ow]
+
+    // index 代表的没有特别的意义
+    // https://www.zhihu.com/question/279648139
+    // https://zhuanlan.zhihu.com/p/58185157
+    // https://blog.csdn.net/sinat_22336563/article/details/69808612
+    // https://blog.csdn.net/hujingshuang/article/details/53097222
 
     // index index of output matrix
+    // 该线程对应的输出特征图的 w 坐标
     const int w_col = index % width_col;
+    // 该线程对应的输出特征图的 h 坐标
     const int h_col = (index / width_col) % height_col;
     // const int b_col = (index / width_col / height_col) % batch_size;
+    // 该线程对应的输入的第几个 batch
     const int b_col = (index / width_col / height_col / num_channels) % batch_size;
     // const int c_im = (index / width_col / height_col) / batch_size;
+    // 该线程对应输入的第几个 channel
     const int c_im = (index / width_col / height_col) % num_channels;
     // const int c_col = c_im * kernel_h * kernel_w;
+    // 该线程对应 im2col 的某个 kernel
     const int c_col = c_im * kernel_h * kernel_w;
 
     // compute deformable group index
     const int deformable_group_index = c_im / channel_per_deformable_group;
 
+    // 输出特征图的 h w 坐标反推出对应的输入特征图上的坐标
     const int h_in = h_col * stride_h - pad_h;
     const int w_in = w_col * stride_w - pad_w;
 
     //  float *data_col_ptr = data_col + ((c_col * batch_size + b_col) * height_col + h_col) * width_col + w_col;
+    // data_col 是数组指针(matrix 本质是数组), 所以修改它的指向, 指向 im2col 矩阵某个 kernel 的起始点
+    // im2col 行数是 kernel-size, 列数实际上就是kernel在图像上滑动的次数即输出图的size
     float *data_col_ptr = data_col + ((b_col * num_channels * kernel_w * kernel_h + c_col) * height_col + h_col) * width_col + w_col;
     //const float* data_im_ptr = data_im + ((b_col * num_channels + c_im) * height + h_in) * width + w_in;
+    // 同上, 指向原图对应 channel 特征图的左上角
     const float *data_im_ptr = data_im + (b_col * num_channels + c_im) * height * width;
+    // 在 deformable_group 等于 1 的时候, 只是定位到某个 batch
     const float *data_offset_ptr = data_offset + (b_col * deformable_group + deformable_group_index) * 2 * kernel_h * kernel_w * height_col * width_col;
-
+    // 同上
     const float *data_mask_ptr = data_mask + (b_col * deformable_group + deformable_group_index) * kernel_h * kernel_w * height_col * width_col;
 
+    // 在该线程循环, 完成 im2col 某一"列"的生成
     for (int i = 0; i < kernel_h; ++i)
     {
       for (int j = 0; j < kernel_w; ++j)
       {
+        // kernel 里该点的 offset 的内存偏移, 这个较为简单
         const int data_offset_h_ptr = ((2 * (i * kernel_w + j)) * height_col + h_col) * width_col + w_col;
         const int data_offset_w_ptr = ((2 * (i * kernel_w + j) + 1) * height_col + h_col) * width_col + w_col;
         const int data_mask_hw_ptr = ((i * kernel_w + j) * height_col + h_col) * width_col + w_col;
+        // 获得该点偏移的值
         const float offset_h = data_offset_ptr[data_offset_h_ptr];
         const float offset_w = data_offset_ptr[data_offset_w_ptr];
+        // 该点偏移的置信度
         const float mask = data_mask_ptr[data_mask_hw_ptr];
-        float val = static_cast<float>(0);
+        float val = static_cast<float>(0);\
+        // 确定偏移后的点在原图上面的位置
         const float h_im = h_in + i * dilation_h + offset_h;
         const float w_im = w_in + j * dilation_w + offset_w;
         //if (h_im >= 0 && w_im >= 0 && h_im < height && w_im < width) {
@@ -184,10 +213,12 @@ __global__ void modulated_deformable_im2col_gpu_kernel(const int n,
           //const int cur_height = height - h_in;
           //const int cur_width = width - w_in;
           //val = dmcn_im2col_bilinear(data_im_ptr, width, cur_height, cur_width, map_h, map_w);
+          // 
           val = dmcn_im2col_bilinear(data_im_ptr, width, height, width, h_im, w_im);
         }
         *data_col_ptr = val * mask;
         // data_col_ptr += batch_size * height_col * width_col;
+        // 该点
         data_col_ptr += height_col * width_col;
       }
     }
@@ -335,8 +366,12 @@ void modulated_deformable_im2col_cuda(cudaStream_t stream,
   const int deformable_group, float* data_col) {
   // num_axes should be smaller than block size
   const int channel_per_deformable_group = channels / deformable_group;
+  // 该 kernel 非卷积的核的意思哦. 而是 cuda 核的意思, 这里计算总共应该有多少线程
+  // 输入的通道数 * N * 输出特征图的长 * 输出特征图的宽, 注意相对于 im2col 矩阵
+  // kernel_w 与 kernel_h 没有算进去, 因为
   const int num_kernels = channels * batch_size * height_col * width_col;
   modulated_deformable_im2col_gpu_kernel
+      // 
       <<<GET_BLOCKS(num_kernels), CUDA_NUM_THREADS,
           0, stream>>>(
       num_kernels, data_im, data_offset, data_mask, height_im, width_im, kernel_h, kernel_w,
