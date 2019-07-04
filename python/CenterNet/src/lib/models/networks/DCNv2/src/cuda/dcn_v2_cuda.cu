@@ -286,9 +286,9 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
         
         // 下面三个均是下面第一个 THCudaBlas_Sgemm 中的参数
         // 来控制输入矩阵的形状的, 具体看 https://www.cnblogs.com/scut-fm/p/3756242.html
-        // 
+        // weight 与 column 的列数
         long m = channels * kernel_h * kernel_w;
-        // grad_output_n 的行数
+        // grad_output_n 与 columns 的行数
         long n = height_out * width_out;
         long k = channels_out;
         
