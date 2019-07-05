@@ -309,15 +309,23 @@ __global__ void modulated_deformable_col2im_coord_gpu_kernel(const int n,
   CUDA_KERNEL_LOOP(index, n)
   {
     float val = 0, mval = 0;
+    // https://www.zhihu.com/question/279648139，原理一样的
+    // 该线程对应的 offset 特征图的 w 坐标
     int w = index % width_col;
+    // 该线程对应的 offset 特征图的 h 坐标
     int h = (index / width_col) % height_col;
+    // 该线程对应的 offset 特征图的第几个通道
     int c = (index / width_col / height_col) % offset_channels;
+    // batch，暂时不用考虑
     int b = (index / width_col / height_col) / offset_channels;
     // compute the start and end of the output
 
+    // 默认为 0(c < (2 * kernel_h * kernel_w), / 得到的肯定是 0)，暂时不用考虑，
     const int deformable_group_index = c / (2 * kernel_h * kernel_w);
+    // 
     const int col_step = kernel_h * kernel_w;
     int cnt = 0;
+    // 
     const float *data_col_ptr = data_col + deformable_group_index * channel_per_deformable_group * batch_size * width_col * height_col;
     const float *data_im_ptr = data_im + (b * deformable_group + deformable_group_index) * channel_per_deformable_group / kernel_h / kernel_w * height * width;
     const float *data_offset_ptr = data_offset + (b * deformable_group + deformable_group_index) * 2 * kernel_h * kernel_w * height_col * width_col;
@@ -428,6 +436,7 @@ void modulated_deformable_col2im_coord_cuda(cudaStream_t stream,
   const int dilation_h, const int dilation_w, 
   const int deformable_group,
   float* grad_offset, float* grad_mask) {
+  // 线程数为 offset 参数数量，mask 不需要额外的线程
   const int num_kernels = batch_size * height_col * width_col * 2 * kernel_h * kernel_w * deformable_group;
   const int channel_per_deformable_group = channels * kernel_h * kernel_w / deformable_group;
   modulated_deformable_col2im_coord_gpu_kernel

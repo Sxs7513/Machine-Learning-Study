@@ -295,13 +295,17 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
         // weight => [out_channels, in_channels, k_h, k_w]
         // out_channels 等于 grad_output_n 的 c
 
-        // weight 点乘 grad_output_n
+        // weight 点乘 grad_output_n, 得到对 im2col 矩阵的梯度
+        // 在普通卷积中对 im2col 矩阵求梯度是没有意义的，从它没法反向推导
+        // 对 input 的梯度(复杂度太高），但是在 deformable-conv 中，得到了
+        // 它的卷积即可得到对于 offset 与 mask 的梯度
         THCudaBlas_Sgemm(state, 'n', 't', n, m, k, 1.0f,
                          grad_output_n.data<scalar_t>(), n,
                          weight.data<scalar_t>(), m, 0.0f,
                          columns.data<scalar_t>(), n);
 
         // gradient w.r.t. input coordinate data
+        // 通过对 im2col 的梯度来计算 offset 和 mask 的梯度
         modulated_deformable_col2im_coord_cuda(THCState_getCurrentStream(state),
                                                columns.data<scalar_t>(),
                                                input_n.data<scalar_t>(),
@@ -314,6 +318,7 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
                                                grad_offset_n.data<scalar_t>(),
                                                grad_mask_n.data<scalar_t>());
         // gradient w.r.t. input data
+        // 
         modulated_deformable_col2im_cuda(THCState_getCurrentStream(state),
                                          columns.data<scalar_t>(),
                                          offset_n.data<scalar_t>(),
@@ -325,6 +330,7 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
                                          grad_input_n.data<scalar_t>());
 
         // gradient w.r.t. weight, dWeight should accumulate across the batch and group
+        // 
         modulated_deformable_im2col_cuda(THCState_getCurrentStream(state),
                                          input_n.data<scalar_t>(),
                                          offset_n.data<scalar_t>(),
