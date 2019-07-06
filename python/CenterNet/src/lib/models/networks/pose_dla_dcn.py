@@ -16,7 +16,7 @@ import torch.utils.model_zoo as model_zoo
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
 
-from .DCNv2.dcn_v2 import DCN
+from DCNv2.dcn_v2 import DCN
 
 # 基本的残差块
 class BasicBlock(nn.Module):
@@ -494,15 +494,25 @@ class DLASeg(nn.Module):
         for head in self.heads:
             classes = self.heads[head]
             if head_conv > 0:
-                pass
+              fc = nn.Sequential(
+                  nn.Conv2d(channels[self.first_level], head_conv,
+                    kernel_size=3, padding=1, bias=True),
+                  nn.ReLU(inplace=True),
+                  nn.Conv2d(head_conv, classes, 
+                    kernel_size=final_kernel, stride=1, 
+                    padding=final_kernel // 2, bias=True))
+              if 'hm' in head:
+                fc[-1].bias.data.fill_(-2.19)
+              else:
+                fill_fc_weights(fc)
             else:
-                fc = nn.Conv2d(channels[self.first_level], classes, 
-                   kernel_size=final_kernel, stride=1, 
-                   padding=final_kernel // 2, bias=True)
-                if 'hm' in head:
-                    fc.bias.data.fill_(-2.19)
-                else:
-                    fill_fc_weights(fc)
+              fc = nn.Conv2d(channels[self.first_level], classes, 
+                  kernel_size=final_kernel, stride=1, 
+                  padding=final_kernel // 2, bias=True)
+              if 'hm' in head:
+                fc.bias.data.fill_(-2.19)
+              else:
+                fill_fc_weights(fc)
             self.__setattr__(head, fc)
 
     def forward(self, x):
@@ -530,10 +540,10 @@ class DLASeg(nn.Module):
         return [z]
 
 
-def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
+def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4, pretrained=True):
     model = DLASeg('dla{}'.format(num_layers),
                    heads,
-                   pretrained=True,
+                   pretrained=pretrained,
                    down_ratio=down_ratio,
                    final_kernel=1,
                    last_level=5,
@@ -544,7 +554,7 @@ def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
 
 if __name__ == '__main__':
     heads = {'hm': 81, "wh": 2}
-    net = get_pose_net(34, heads)
+    net = get_pose_net(34, heads, pretrained=False)
     # net = dla34(False)
     x = torch.ones(2, 3, 512, 512)
     y = net(x)
