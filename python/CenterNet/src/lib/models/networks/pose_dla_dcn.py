@@ -16,6 +16,7 @@ import torch.utils.model_zoo as model_zoo
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
 
+from .DCNv2.dcn_v2 import DCN
 
 # 基本的残差块
 class BasicBlock(nn.Module):
@@ -542,19 +543,9 @@ def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4):
 
 
 if __name__ == '__main__':
-    # x = torch.ones(2, 3, 512, 512)
+    heads = {'hm': 81, "wh": 2}
+    net = get_pose_net(34, heads)
     # net = dla34(False)
-    # y = net(x)
-    # for output in y:
-    #     print(output.size())
-
-    up = nn.ConvTranspose2d(
-        3,
-        5,
-        kernel_size=4,
-        stride=2,
-        padding=1,
-        output_padding=0,
-    )
-    fill_up_weights(up)
-    print(up.weight.data)
+    x = torch.ones(2, 3, 512, 512)
+    y = net(x)
+    print(y.shape)

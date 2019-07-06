@@ -299,6 +299,7 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
         // 在普通卷积中对 im2col 矩阵求梯度是没有意义的，从它没法反向推导
         // 对 input 的梯度(复杂度太高），但是在 deformable-conv 中，得到了
         // 它的卷积即可得到对于 offset 与 mask 的梯度
+        // 上面这段只是针对没有 GPU 的。。。
         THCudaBlas_Sgemm(state, 'n', 't', n, m, k, 1.0f,
                          grad_output_n.data<scalar_t>(), n,
                          weight.data<scalar_t>(), m, 0.0f,
@@ -318,7 +319,7 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
                                                grad_offset_n.data<scalar_t>(),
                                                grad_mask_n.data<scalar_t>());
         // gradient w.r.t. input data
-        // 
+        // 计算对输入的梯度
         modulated_deformable_col2im_cuda(THCState_getCurrentStream(state),
                                          columns.data<scalar_t>(),
                                          offset_n.data<scalar_t>(),
@@ -330,7 +331,7 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
                                          grad_input_n.data<scalar_t>());
 
         // gradient w.r.t. weight, dWeight should accumulate across the batch and group
-        // 
+        // 求得原始的 im2col 
         modulated_deformable_im2col_cuda(THCState_getCurrentStream(state),
                                          input_n.data<scalar_t>(),
                                          offset_n.data<scalar_t>(),
@@ -344,7 +345,8 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
         long m_ = channels_out;
         long n_ = channels * kernel_h * kernel_w;
         long k_ = height_out * width_out;
-
+        
+        // 求得对卷积权重的梯度
         THCudaBlas_Sgemm(state, 't', 'n', n_, m_, k_, 1.0f,
                          columns.data<scalar_t>(), k_,
                          grad_output_n.data<scalar_t>(), k_, 1.0f,
@@ -353,6 +355,7 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(const at::Tensor &input,
         // gradient w.r.t. bias
         // long m_ = channels_out;
         // long k__ = height_out * width_out;
+        // 对偏置的梯度
         THCudaBlas_Sgemv(state,
                          't',
                          k_, m_, 1.0f,
