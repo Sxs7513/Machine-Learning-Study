@@ -102,6 +102,7 @@ class DCN(DCNv2):
         super(DCN, self).__init__(in_channels, out_channels,
                                   kernel_size, stride, padding, dilation, deformable_groups)
 
+        # offset 和 mask 需要的特征图数量，即卷积核数量
         channels_ = self.deformable_groups * 3 * self.kernel_size[0] * self.kernel_size[1]
         self.conv_offset_mask = nn.Conv2d(self.in_channels,
                                           channels_,

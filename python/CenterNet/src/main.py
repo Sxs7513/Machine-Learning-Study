@@ -15,6 +15,7 @@ import torch.utils.data
 from opts import opts
 from models.model import create_model, load_model, save_model
 from datasets.dataset_factory import get_dataset
+from trains.train_factory import train_factory
 
 
 
@@ -31,9 +32,14 @@ def main(opt):
     opt.device = torch.device('cuda' if opt.gpus[0] >= 0 else 'cpu')
 
     print('Creating model...')
-    # TODO create model
     model = create_model(opt.arch, opt.heads, opt.head_conv)
+    optimizer = torch.optim.Adam(model.parameters(), opt.lr)
+    start_epoch = 0
+    # TODO load model
 
+    Trainer = train_factory[opt.task]
+    trainer = Trainer(opt, model, optimizer)
+    trainer.set_device(opt.gpus, opt.chunk_sizes, opt.device)
 
     print('Setting up data...')
     # TODO val
@@ -46,6 +52,13 @@ def main(opt):
         pin_memory=True,
         drop_last=True
     )
+
+    print('Starting training...')
+    best = 1e10
+    for epoch in range(start_epoch + 1, opt.num_epochs + 1):
+        mark = epoch if opt.save_all else 'last'
+        log_dict_train, _ = trainer.train(epoch, train_loader)
+
 
 
 if __name__ == '__main__':

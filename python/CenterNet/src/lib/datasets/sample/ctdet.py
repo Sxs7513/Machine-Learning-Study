@@ -36,6 +36,7 @@ class CTDetDataset(data.Dataset):
         # 图片路径
         img_path = os.path.join(self.img_dir, file_name)
         ann_ids = self.coco.getAnnIds(imgIds=[img_id])
+        # 该图片里面的物体信息
         anns = self.coco.loadAnns(ids=ann_ids)
         num_objs = min(len(anns), self.max_objs)
 
@@ -67,6 +68,7 @@ class CTDetDataset(data.Dataset):
                 c[1] = np.random.randint(low=h_border,
                                          high=img.shape[0] - h_border)
             else:
+                # 不稳定不建议使用
                 sf = self.opt.scale
                 cf = self.opt.shift
                 c[0] += s * np.clip(np.random.randn() * cf, -2 * cf, 2 * cf)
@@ -97,14 +99,17 @@ class CTDetDataset(data.Dataset):
         output_h = input_h // self.opt.down_ratio
         output_w = input_w // self.opt.down_ratio
         num_classes = self.num_classes
+        # 生成针对 backone 网络输出图的仿射变换矩阵
         trans_output = get_affine_transform(c, s, 0, [output_w, output_h])
 
-        # 初始热力图，大小是经过 backbone 网络后的特征图的大小
+        # 初始热力图，大小是经过 backbone 网络后的特征图的大小，通道数是类别数
         hm = np.zeros((num_classes, output_h, output_w), dtype=np.float32)
-        # box宽高
+        # 
         wh = np.zeros((self.max_objs, 2), dtype=np.float32)
+        # box 宽高初始矩阵
         dense_wh = np.zeros((2, output_h, output_w), dtype=np.float32)
         reg = np.zeros((self.max_objs, 2), dtype=np.float32)
+        # 
         ind = np.zeros((self.max_objs), dtype=np.int64)
         reg_mask = np.zeros((self.max_objs), dtype=np.uint8)
         cat_spec_wh = np.zeros((self.max_objs, num_classes * 2),
@@ -124,15 +129,15 @@ class CTDetDataset(data.Dataset):
             cls_id = int(self.cat_ids[ann['category_id']])
             if flipped:
                 bbox[[0, 2]] = width - bbox[[2, 0]] - 1
-            # 左上角坐标经过变换后的位置
+            # 在backbone网络输出图(output)中左上角坐标经过变换后的位置
             bbox[:2] = affine_transform(bbox[:2], trans_output)
-            # 右下角坐标经过变换后的位置
+            # 在backbone网络输出图(output)中右下角坐标经过变换后的位置
             bbox[2:] = affine_transform(bbox[2:], trans_output)
             # x 坐标 clip，不能超过 output
             bbox[[0, 2]] = np.clip(bbox[[0, 2]], 0, output_w - 1)
             # y 坐标同上
             bbox[[1, 3]] = np.clip(bbox[[1, 3]], 0, output_h - 1)
-            # box 高与宽
+            # 在 output 中 box 高与宽
             h, w = bbox[3] - bbox[1], bbox[2] - bbox[0]
             if h > 0 and w > 0:
                 # 计算概率半径
@@ -145,15 +150,17 @@ class CTDetDataset(data.Dataset):
                               dtype=np.float32)
                 # box 中心点，整数
                 ct_int = ct.astype(np.int32)
-                # 绘制该 box 的热力图
+                # 在 hm 上面绘制该 box 的热力图
                 draw_gaussian(hm[cls_id], ct_int, radius)
                 # 宽高赋值
                 wh[k] = 1. * w, 1. * h
-                # 
+                # 中心点在 output 上第几个像素处
                 ind[k] = ct_int[1] * output_w + ct_int[0]
                 # 偏置量
                 reg[k] = ct - ct_int
+                # 有些 box 可能在随即变换过程中移动出去了，要把它们排除在外
                 reg_mask[k] = 1
+                # 
                 cat_spec_wh[k, cls_id * 2:cls_id * 2 + 2] = wh[k]
                 cat_spec_mask[k, cls_id * 2:cls_id * 2 + 2] = 1
                 if self.opt.dense_wh:

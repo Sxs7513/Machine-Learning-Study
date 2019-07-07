@@ -533,7 +533,6 @@ class DLASeg(nn.Module):
             y.append(x[i].clone())
         # y[-1] => [N, 256, 128, 128]
         self.ida_up(y, 0, len(y))
-
         z = {}
         for head in heads:
             z[head] = self.__getattr__(head)(y[-1])
@@ -553,9 +552,13 @@ def get_pose_net(num_layers, heads, head_conv=256, down_ratio=4, pretrained=True
 
 
 if __name__ == '__main__':
-    heads = {'hm': 81, "wh": 2}
-    net = get_pose_net(34, heads, pretrained=False)
+    device_ids = list(range(torch.cuda.device_count()))
+    heads = {'hm': 81, "wh": 2, 'reg': 2}
+    net = get_pose_net(34, heads, pretrained=False).cuda()
     # net = dla34(False)
-    x = torch.ones(2, 3, 512, 512)
+    x = torch.ones(2, 3, 512, 512).cuda()
     y = net(x)
-    print(y.shape)
+    for key, value in y[0].items():
+        print(key)
+        print(value.size())
+        print('------------------')
