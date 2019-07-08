@@ -16,7 +16,7 @@ import torch.utils.model_zoo as model_zoo
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
 
-from DCNv2.dcn_v2 import DCN
+from .DCNv2.dcn_v2 import DCN
 
 # 基本的残差块
 class BasicBlock(nn.Module):
