@@ -534,7 +534,7 @@ class DLASeg(nn.Module):
         # y[-1] => [N, 256, 128, 128]
         self.ida_up(y, 0, len(y))
         z = {}
-        for head in heads:
+        for head in self.heads:
             z[head] = self.__getattr__(head)(y[-1])
         return [z]
 

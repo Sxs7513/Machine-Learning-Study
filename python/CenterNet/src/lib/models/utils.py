@@ -12,7 +12,7 @@ def _sigmoid(x):
 
 # feat => [N, 128 * 128, 2]
 # ind => [N, max_objs]
-def _gather_feat(feat, ind):
+def _gather_feat(feat, ind, mask=None):
     dim = feat.size(2)
     # [N, max_objs, 1] => [N, max_objs, 2]
     ind = ind.unsqueeze(2).expand(ind.size(0), ind.size(1), dim)

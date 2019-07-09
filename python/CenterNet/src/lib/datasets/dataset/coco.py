@@ -23,7 +23,8 @@ class COCO(data.Dataset):
         super(COCO, self).__init__()
         self.data_dir = os.path.join(opt.data_dir, 'COCO')
         self.img_dir = os.path.join(self.data_dir,
-                                    '{}2017/{}2017'.format(split, split))
+                                    '{}2017'.format(split))
+        
         if split == 'test':
             self.annot_path = os.path.join(
                 self.data_dir, 'annotations_test2017', 'annotations'
@@ -36,7 +37,7 @@ class COCO(data.Dataset):
                     'instances_extreme_{}2017.json').format(split)
             else:
                 self.annot_path = os.path.join(
-                    self.data_dir, 'annotations_trainval2017', 'annotations',
+                    self.data_dir, 'annotations',
                     'instances_{}2017.json').format(split)
         self.max_objs = 128
         self.class_name = [

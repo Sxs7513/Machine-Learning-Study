@@ -18,7 +18,6 @@ from datasets.dataset_factory import get_dataset
 from trains.train_factory import train_factory
 
 
-
 def main(opt):
     torch.manual_seed(opt.seed)
     torch.backends.cudnn.benchmark = not opt.not_cuda_benchmark and not opt.test
@@ -42,16 +41,18 @@ def main(opt):
     trainer.set_device(opt.gpus, opt.chunk_sizes, opt.device)
 
     print('Setting up data...')
-    # TODO val
+    val_loader = torch.utils.data.DataLoader(Dataset(opt, 'val'),
+                                             batch_size=1,
+                                             shuffle=False,
+                                             num_workers=1,
+                                             pin_memory=False)
 
-    train_loader = torch.utils.data.DataLoader(
-        Dataset(opt, 'train'),
-        batch_size=opt.batch_size, 
-        shuffle=True,
-        num_workers=opt.num_workers,
-        pin_memory=True,
-        drop_last=True
-    )
+    train_loader = torch.utils.data.DataLoader(Dataset(opt, 'train'),
+                                               batch_size=opt.batch_size,
+                                               shuffle=True,
+                                               num_workers=opt.num_workers,
+                                               pin_memory=False,
+                                               drop_last=True)
 
     print('Starting training...')
     best = 1e10
@@ -63,8 +64,8 @@ def main(opt):
             logger.scalar_summary('train_{}'.format(k), v, epoch)
             logger.write('{} {:8f} | '.format(k, v))
         if opt.val_intervals > 0 and epoch % opt.val_intervals == 0:
-            save_model(os.path.join(opt.save_dir, 'model_{}.pth'.format(mark)), 
-                    epoch, model, optimizer)
+            save_model(os.path.join(opt.save_dir, 'model_{}.pth'.format(mark)),
+                       epoch, model, optimizer)
         with torch.no_grad():
             log_dict_val, preds = trainer.val(epoch, val_loader)
         for k, v in log_dict_val.items():
@@ -72,16 +73,17 @@ def main(opt):
             logger.write('{} {:8f} | '.format(k, v))
         if log_dict_val[opt.metric] < best:
             best = log_dict_val[opt.metric]
-            save_model(os.path.join(opt.save_dir, 'model_best.pth'), 
-                    epoch, model)
+            save_model(os.path.join(opt.save_dir, 'model_best.pth'), epoch,
+                       model)
         else:
-            save_model(os.path.join(opt.save_dir, 'model_last.pth'), 
-                    epoch, model, optimizer)
+            save_model(os.path.join(opt.save_dir, 'model_last.pth'), epoch,
+                       model, optimizer)
         logger.write('\n')
         if epoch in opt.lr_step:
-            save_model(os.path.join(opt.save_dir, 'model_{}.pth'.format(epoch)), 
-                    epoch, model, optimizer)
-            lr = opt.lr * (0.1 ** (opt.lr_step.index(epoch) + 1))
+            save_model(
+                os.path.join(opt.save_dir, 'model_{}.pth'.format(epoch)),
+                epoch, model, optimizer)
+            lr = opt.lr * (0.1**(opt.lr_step.index(epoch) + 1))
             print('Drop LR to', lr)
             for param_group in optimizer.param_groups:
                 param_group['lr'] = lr

@@ -8,6 +8,7 @@ import numpy as np
 from models.losses import FocalLoss
 from models.losses import RegL1Loss, RegLoss, NormRegL1Loss, RegWeightedL1Loss
 from .base_trainer import BaseTrainer
+from models.utils import _sigmoid
 
 
 class CtdetLoss(torch.nn.Module):
@@ -23,7 +24,7 @@ class CtdetLoss(torch.nn.Module):
 
     # hm => [N, C(类别数), 128, 128] 
     # wh => [N, 2, 128, 128] 
-    def forward(self, output, batch):
+    def forward(self, outputs, batch):
         opt = self.opt
         hm_loss, wh_loss, off_loss = 0, 0, 0
         for s in range(opt.num_stacks):

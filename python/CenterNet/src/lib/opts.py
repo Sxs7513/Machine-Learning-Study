@@ -36,7 +36,7 @@ class opts(object):
     # system
     self.parser.add_argument('--gpus', default='0', 
                              help='-1 for CPU, use comma for multiple gpus')
-    self.parser.add_argument('--num_workers', type=int, default=4,
+    self.parser.add_argument('--num_workers', type=int, default=0,
                              help='dataloader threads. 0 for single-thread.')
     self.parser.add_argument('--not_cuda_benchmark', action='store_true',
                              help='disable when the input size is not fixed.')
@@ -86,7 +86,7 @@ class opts(object):
                              help='drop learning rate by 10.')
     self.parser.add_argument('--num_epochs', type=int, default=140,
                              help='total training epochs.')
-    self.parser.add_argument('--batch_size', type=int, default=32,
+    self.parser.add_argument('--batch_size', type=int, default=2,
                              help='batch size')
     self.parser.add_argument('--master_batch_size', type=int, default=-1,
                              help='batch size on the master gpu.')
