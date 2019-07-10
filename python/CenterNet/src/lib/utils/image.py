@@ -36,21 +36,30 @@ def get_affine_transform(center,
         scale = np.array([scale, scale], dtype=np.float32)
 
     scale_tmp = scale
+    # 缩放后的长边的长度
     src_w = scale_tmp[0]
     dst_w = output_size[0]
     dst_h = output_size[1]
 
+    # 旋转的角度
     rot_rad = np.pi * rot / 180
+    # 某个点经旋转后的位置
     src_dir = get_dir([0, src_w * -0.5], rot_rad)
+    # 某个点经旋转后的位置
     dst_dir = np.array([0, dst_w * -0.5], np.float32)
 
     src = np.zeros((3, 2), dtype=np.float32)
     dst = np.zeros((3, 2), dtype=np.float32)
+    # 变换前中心位置
     src[0, :] = center + scale_tmp * shift
+    # 变换前图上某个点经旋转后的位置
     src[1, :] = center + src_dir + scale_tmp * shift
+    # 变换后中心位置
     dst[0, :] = [dst_w * 0.5, dst_h * 0.5]
+    # 变换后的图上某个点经旋转后的位置
     dst[1, :] = np.array([dst_w * 0.5, dst_h * 0.5], np.float32) + dst_dir
-
+    
+    # 
     src[2:, :] = get_3rd_point(src[0, :], src[1, :])
     dst[2:, :] = get_3rd_point(dst[0, :], dst[1, :])
 
@@ -73,6 +82,7 @@ def get_3rd_point(a, b):
     return b + np.array([-direct[1], direct[0]], dtype=np.float32)
 
 
+# 计算某个点旋转后的位置
 def get_dir(src_point, rot_rad):
     sn, cs = np.sin(rot_rad), np.cos(rot_rad)
 

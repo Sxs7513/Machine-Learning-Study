@@ -57,7 +57,7 @@ class CTDetDataset(data.Dataset):
         flipped = False
         if self.split == 'train':
             if not self.opt.not_rand_crop:
-                # 随机拉伸度
+                # 随机拉伸后的长度
                 s = s * np.random.choice(np.arange(0.6, 1.4, 0.1))
                 # 图片 128 的情况下，值都为 128
                 w_border = self._get_border(128, img.shape[1])
