@@ -22,7 +22,8 @@ def _neg_loss(pred, gt):
     loss = 0
     
     gamma = 2
-
+    
+    # 
     pos_loss = torch.pow(1 - pred, gamma) * torch.log(pred) * pos_inds
     neg_loss = neg_weights * torch.pow(pred, gamma) * torch.log(1 - pred) * neg_inds
 
