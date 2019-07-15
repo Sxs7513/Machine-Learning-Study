@@ -15,6 +15,48 @@ inline int GET_BLOCKS(const int N)
 }
 
 
+__device__ flaot dmcn_im2col_bilinear(
+    const float *bottom_data,
+    const int data_width,
+    const int height,
+    const int width,
+    float h,
+    float w
+)
+{
+    int h_low = floor(h);
+    int w_low = floor(W);
+
+    int h_high = h_low + 1;
+    int w_hight = w_low + 1;
+
+    float lh = h - h_low;
+    float lw = w - w_low;
+    float hh = 1 - lh, hw = 1 - lw;
+
+    float v1 = 0;
+    if (h_low > 0 && w_low > 0)
+        v1 = bottom_data[h_low * data_width + w_low];
+
+    float v2 = 0;
+    if (h_low >= 0 && w_high <= width - 1)
+        v2 = bottom_data[h_low * data_width + w_high];
+
+    float v3 = 0;
+    if (h_high <= height - 1 && w_low >= 0)
+        v3 = bottom_data[h_high * data_width + w_low];
+    
+    float v4 = 0;
+    if (h_high <= height - 1 && w_high <= width - 1)
+        v4 = bottom_data[h_high * data_width + w_high];
+
+    float w1 = hh * hw, w2 = hh * lw, w3 = lh * hw, w4 = lh * lw;
+
+    float val = (w1 * v1 + w2 * v2 + w3 * v3 + w4 * v4);
+    return val
+}
+
+
 __global__ void modulated_deformable_im2col_gpu_kernel(
     const int n,
     const float *data_input,
@@ -57,6 +99,36 @@ __global__ void modulated_deformable_im2col_gpu_kernel(
         float *data_col_pos = data_col + \
             (b_index * in_channels * kernel_w * kernel_h + c_in_index) \ 
             * height_out + h_coord_out) * width_out + w_coord_out;
+
+        const float *data_input_ptr = data_input + (b_index * in_channels + c_in_index) * height_out * width_out;
+        const float *data_offset_ptr = data_offset + (b_index * deformable_group + deformable_group_index) * 2 * kernel_h * kernel_w * height_in * width_in;
+        const float *data_mask_ptr = data_mask + (b_index * deformable_group + deformable_group_index) * kernel_h * kernel_w * height_out * width_out;
+        
+        for (int i=0; i<kernel_h; ++i)
+        {
+            for (int j=0; j<kernel_w; ++j)
+            {
+                const int data_offset_h_pos = ((2 * (i * kernel_w + j)) * height_out) + h_coord_out) width_out + w_coord_out;
+                const int data_offset_w_pos = ((2 * (i * kernel_w + j) + 1) * height_out + h_coord_out) * width_out + w_coord_out;
+                const int data_mask_hw_pos = ((i * kernel_w + j) * height_out + h_coord_out) * width_out + w_coord_out;
+
+                const float offset_h = data_offset_ptr[data_offset_h_pos];
+                const float offset_w = data_offset_ptr[data_offset_w_pos];
+                const float mask = data_mask_ptr[data_mask_hw_pos];
+
+                float val = static_cast<float>(0);
+
+                const float h_input = h_coord_in + i * dilation_h + offset_h;
+                const float w_input = w_coord_in + j * dilation_w + offset_w;
+
+                if (h_input > - 1 && w_input > -1 && h_coord_in < height && w_im < width_in)
+                {
+                    val = dmcn_im2col_bilinear(data_input_ptr, width, height, wdith, h_input, w_input);
+                }
+                *data_col_ptr = val * mask;
+                data_col_ptr += height_out * width_out;
+            }
+        }
     }
 }
 
@@ -111,5 +183,11 @@ void modulated_deformable_im2col_cuda(
         height_out, 
         width_out, 
         data_col
-    )
+    );
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+    {
+        printf("error in modulated_deformable_im2col_cuda: %s\n", cudaGetErrorString(err));
+    }
 }

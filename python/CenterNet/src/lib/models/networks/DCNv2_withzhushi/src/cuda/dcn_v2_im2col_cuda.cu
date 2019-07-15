@@ -215,7 +215,7 @@ __global__ void modulated_deformable_im2col_gpu_kernel(const int n,
         const float offset_w = data_offset_ptr[data_offset_w_ptr];
         // 该点偏移的置信度
         const float mask = data_mask_ptr[data_mask_hw_ptr];
-        float val = static_cast<float>(0);\
+        float val = static_cast<float>(0);
         // 确定偏移后的点在原图上面的位置
         const float h_im = h_in + i * dilation_h + offset_h;
         const float w_im = w_in + j * dilation_w + offset_w;
