@@ -15,15 +15,13 @@ def _neg_loss(pred, gt):
     neg_inds = pred.lt(1).float()
 
     # 这个是论文中作者加的，作用是配合 heatmap 来让物体中心一定范围内的点的惩罚
-    # 小一些，因为可以看出除了中心点之外，其他的都被归类为负样本，而对于 heatmap 内的
-    # 点，它们也可以算作是“小中心”
+    # 小一些，可以让中心周围的点的损失小一些，某种程度上来突出中心的损失
     neg_weights = torch.pow(1 - gt, 4)
 
     loss = 0
     
     gamma = 2
     
-    # 
     pos_loss = torch.pow(1 - pred, gamma) * torch.log(pred) * pos_inds
     neg_loss = neg_weights * torch.pow(pred, gamma) * torch.log(1 - pred) * neg_inds
 
