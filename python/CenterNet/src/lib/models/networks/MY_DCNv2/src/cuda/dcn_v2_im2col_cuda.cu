@@ -191,3 +191,8 @@ void modulated_deformable_im2col_cuda(
         printf("error in modulated_deformable_im2col_cuda: %s\n", cudaGetErrorString(err));
     }
 }
+
+
+void modulated_deformable_col2im_coord_cuda(
+    cudaStream_t stream,
+)
