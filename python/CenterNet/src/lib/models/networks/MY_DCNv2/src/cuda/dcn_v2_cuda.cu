@@ -299,6 +299,30 @@ std::vector<at::Tensor> dcn_v2_cuda_backward(
             n
         )
 
-        
+        modulated_deformable_col2im_coord_cuda(
+            THCState_getCurrentStream(state),
+            columns.data<scalar_t>(),
+            input_n.data<scalar_t>(),
+            offset_n.data<scalar_t>(),
+            mask_n.data<scalar_t>(),
+            1, channels, height, width,
+            height_out, width_out, kernel_h, kernel_w,
+            pad_h, pad_w, stride_h, stride_w,
+            dilation_h, dilation_w, deformable_group,
+            grad_offset_n.data<scalar_t>(),
+            grad_mask_n.data<scalar_t>()
+        );
+
+        modulated_deformable_col2im_cuda(
+            THCState_getCurrentStream(state),
+            columns.data<scalar_t>(),
+            offset_n.data<scalar_t>(),
+            mask_n.data<scalar_t>(),
+            1, channels, height, width,
+            height_out, width_out, kernel_h, kernel_w,
+            pad_h, pad_w, stride_h, stride_w,
+            dilation_h, dilation_w, deformable_group,
+            grad_input_n.data<scalar_t>()
+        );
     }
 }

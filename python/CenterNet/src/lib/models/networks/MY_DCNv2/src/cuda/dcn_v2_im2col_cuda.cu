@@ -57,6 +57,57 @@ __device__ flaot dmcn_im2col_bilinear(
 }
 
 
+__device__ float dmcn_get_coordinate_weight(
+    float argmax_h,
+    float argmax_w,
+    const int height,
+    const int width,
+    const float *im_data,
+    const int data_width,
+    const int bp_dir
+)
+{
+    if (argmax_h <= -1 || argmax_h >= height || argmax_w <= -1 || argmax_w >= width)
+    {
+        //empty
+        return 0;
+    }
+
+    int argmax_h_low = floor(argmax_h);
+    int argmax_w_low = floor(argmax_w);
+    int argmax_h_high = argmax_h_low + 1;
+    int argmax_w_high = argmax_w_low + 1;
+
+    float weight = 0;
+
+    if (bp_dir == 0)
+    {
+        if (argmax_h_low >= 0 && argmax_w_low >= 0)
+        weight += -1 * (argmax_w_low + 1 - argmax_w) * im_data[argmax_h_low * data_width + argmax_w_low];
+        if (argmax_h_low >= 0 && argmax_w_high <= width - 1)
+        weight += -1 * (argmax_w - argmax_w_low) * im_data[argmax_h_low * data_width + argmax_w_high];
+        if (argmax_h_high <= height - 1 && argmax_w_low >= 0)
+        weight += (argmax_w_low + 1 - argmax_w) * im_data[argmax_h_high * data_width + argmax_w_low];
+        if (argmax_h_high <= height - 1 && argmax_w_high <= width - 1)
+        weight += (argmax_w - argmax_w_low) * im_data[argmax_h_high * data_width + argmax_w_high];
+    }
+    // 对 w 的梯度
+    else if (bp_dir == 1)
+    {
+        if (argmax_h_low >= 0 && argmax_w_low >= 0)
+        weight += -1 * (argmax_h_low + 1 - argmax_h) * im_data[argmax_h_low * data_width + argmax_w_low];
+        if (argmax_h_low >= 0 && argmax_w_high <= width - 1)
+        weight += (argmax_h_low + 1 - argmax_h) * im_data[argmax_h_low * data_width + argmax_w_high];
+        if (argmax_h_high <= height - 1 && argmax_w_low >= 0)
+        weight += -1 * (argmax_h - argmax_h_low) * im_data[argmax_h_high * data_width + argmax_w_low];
+        if (argmax_h_high <= height - 1 && argmax_w_high <= width - 1)
+        weight += (argmax_h - argmax_h_low) * im_data[argmax_h_high * data_width + argmax_w_high];
+    }
+
+    return weight;
+}
+
+
 __global__ void modulated_deformable_col2im_coord_gpu_kernel(
     const int n,
     const float *data_col, 
@@ -160,6 +211,9 @@ __global__ void modulated_deformable_col2im_coord_gpu_kernel(
             val += data_col_ptr[col_pos] * weight * mask;
             cnt += 1
         }
+        grad_offset[index] = val;
+        if (offset_c % 2 == 0)
+            grad_mask[(((b * deformable_group + deformable_group_index) * kernel_h * kernel_w + offset_c / 2) * height_col + h) * width_col + w] = mval;
     }
 }
 
@@ -354,4 +408,10 @@ void modulated_deformable_col2im_coord_cuda(
         grad_offset, 
         grad_mask
     )
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess)
+    {
+        printf("error in modulated_deformable_col2im_coord_cuda: %s\n", cudaGetErrorString(err));
+    }
 }
