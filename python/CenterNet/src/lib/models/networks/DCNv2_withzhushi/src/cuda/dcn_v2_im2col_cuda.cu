@@ -362,7 +362,7 @@ __global__ void modulated_deformable_col2im_coord_gpu_kernel(const int n,
     // data_col 即 im2col => [N(1), inChannels * kernel_h * kernel_w, out_w * out_h]
     // 循环这样做的原因是在前向传播中input不同通道的同一位置用的是同一个偏移，但是在反向传播的时候，通过 im2col 的梯度
     // 来找偏移的梯度的时候, 输入的每一个通道的相同位置的梯度都要传播到该偏移上面
-    // offset_c / 2 是因为 im2col 上面一个点对应的是俩偏移，它代表的是 kernel 上哪个点
+    // offset_c / 2 是因为 im2col 上面一个点对应的是俩偏移，它代表的是 im2col 的 kernel 上哪个点
     // 不断累加 col_step 即不断的往下个 channel 跳(注意看 im2col 的形状)
     for (int col_c = (offset_c / 2); col_c < channel_per_deformable_group; col_c += col_step)
     {
