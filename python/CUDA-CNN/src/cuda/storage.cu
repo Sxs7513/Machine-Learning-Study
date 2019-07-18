@@ -1,17 +1,17 @@
-#include <storage.cuh>
-#include <utils.cuh>
+#include "storage.cuh"
+#include "utils.cuh"
 
 #include <curand_kernel.h>
 #include <device_launch_parameters.h>
 
 #include <cmath>
 
-Storage::Storage(const int std::vector<int> &_shape): shape(_shape) {
+Storage::Storage(const std::vector<int> &_shape): shape(_shape) {
     int size = 1;
     for (int i=0; i<_shape.size(); i++) {
         size *= _shape[i];
     }
-
+    
     this->data.resize(size);
 }
 
@@ -32,12 +32,23 @@ Storage::Storage(const std::vector<int> &_shape, const std::vector<float> &_data
 
 Storage::Storage(const Storage &other) { *this = other; }
 
+Storage &Storage::operator=(const Storage &other) {
+  if (this != &other) {
+    this->shape = other.shape;
+    this->data = other.data;
+  }
+
+  return *this;
+}
+
+Storage::Storage(Storage &&other) { *this = std::move(other); }
+
 Storage &Storage::operator=(Storage &&other) {
-    if (this != &other) {
-        this->shape = std::move(other.shape);
-        this->data = std::move(other.data);
-    }
-    return *this;
+  if (this != &other) {
+    this->shape = std::move(other.shape);
+    this->data = std::move(other.data);
+  }
+  return *this;
 }
 
 void Storage::reshape(const std::vector<int> &_shape) {
@@ -76,7 +87,7 @@ void Storage::xavier(size_t in_size, size_t out_size) {
     curandState *cs_ptr = RAW_PTR(cs);
     float scale = std::sqrt((float)6) / std::sqrt((float)(in_size) + out_size);
     storage_xavier<<<grid_size, BLOCK_SIZE>>>(a_ptr, size, scale, cs_ptr);
-
+    
     CUDA_POST_KERNEL_CHECK;
 }
 
@@ -85,5 +96,15 @@ void Storage::check_size() {
     for (int i=0; i < this->shape.size(); i++) {
         size *= this->shape[i];
     }
+    
     CHECK_EQ(size, this->data.size(), "Storage: size error");
+}
+
+// test
+int main()
+{
+
+    std::cout<<"Hello NVCC"<<std::endl;
+    return 0;
+
 }
