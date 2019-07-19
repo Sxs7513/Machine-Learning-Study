@@ -6,5 +6,10 @@
         "D:\\Users\\xssong\\AppData\\Local\\Continuum\\anaconda3\\Scripts\\activate.bat D:\\Users\\xssong\\AppData\\Local\\Continuum\\anaconda3"
     ],
     "terminal.integrated.shell.windows": "cmd.exe",
-    "python.formatting.provider": "yapf"
+    "python.formatting.provider": "yapf",
+
+    "files.associations": {
+        "*.cu": ["cpp"],
+        "*.cuh": ["cpp"]
+    }
 }

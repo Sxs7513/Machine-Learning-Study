@@ -24,4 +24,25 @@
     }                                                              \
   } while (0)
 
+
 #define RAW_PTR(vector) thrust::raw_pointer_cast(vector.data())
+
+
+#define INIT_STORAGE(storage_ptr, shape)              \
+  do {                                                \
+    if (storage_ptr.get() == nullptr) {               \
+      storage_ptr.reset(new Storage(shape));      \
+    } else if (storage_ptr->get_shape() != shape) {   \
+      storage_ptr->resize(shape);                     \
+    }                                                 \
+  } while (0)                                         \
+
+
+// https://blog.csdn.net/u012604810/article/details/79798082
+#define INIT_TEMP(dict, key_name, shape)               \
+do {                                                   \
+  if (dict.find(key_name) == dict.end()) {             \
+    dict[key_name] = std::make_unique<Storage>(shape); \
+  }                                                    \
+  INIT_STORAGE(dict[key_name], shape);                 \
+} while (0)

@@ -26,6 +26,7 @@ class Storage {
         std::vector<int> &get_shape() { return this->shape; };
         const std::vector<int> &get_shape() const { return this->shape; };
         thrust::device_vector<float> &get_data() { return this->data; };
+        // https://blog.csdn.net/BeyondHaven/article/details/3490209
         const thrust::device_vector<float> &get_data() const { return this->data; };
 
     private:

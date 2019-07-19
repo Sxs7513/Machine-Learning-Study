@@ -32,7 +32,7 @@ class Layer {
         };
 
         virtual Storage *get_grad() { return this->grad.get(); }
-        virtual Storage *get_output() { return this->get_output.get(); }
+        virtual Storage *get_output() { return this->output.get(); }
 
     protected:
         Layer *pre;
