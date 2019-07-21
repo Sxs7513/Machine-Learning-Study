@@ -183,7 +183,7 @@ __global__ void modulated_deformable_im2col_gpu_kernel(const int n,
     const int h_in = h_col * stride_h - pad_h;
     const int w_in = w_col * stride_w - pad_w;
 
-    // float *data_col_ptr = data_col + ((c_col * batch_size + b_col) * height_col + h_col) * width_col + w_col;
+    // float *data_col_ptr = data_col + ((c_col * batch_size + b_col) * (kernel_h * kernel_w) * height_col + h_col) * width_col + w_col;
     // data_col 是数组指针(matrix 本质是数组), 所以修改它的指向, 指向 im2col 矩阵某个 kernel 的起始点
     // im2col 行数是 kernel-size, 列数实际上就是kernel在图像上滑动的次数即输出图的size
     float *data_col_ptr = data_col + ((b_col * num_channels * kernel_w * kernel_h + c_col) * height_col + h_col) * width_col + w_col;

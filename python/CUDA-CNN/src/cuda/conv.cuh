@@ -1,7 +1,7 @@
 #pragma once
 
-#include <blas.cuh>
-#include <layer.cuh>
+#include "blas.cuh"
+#include "layer.cuh"
 
 #include<unordered_map>
 
@@ -33,7 +33,7 @@ void operator_d_conv_bias(
                     
 #endif
 
-class Conv : public layer {
+class Conv : public Layer {
     public:
         explicit Conv(
             int height, int width, int channel_in, int channel_out,
@@ -65,4 +65,4 @@ class Conv : public layer {
         int stride_w;
         int stride_h;
         bool is_bias;
-}
+};

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <blas.cuh>
-#include <layer.cuh>
+#include "blas.cuh"
+#include "layer.cuh"
 
 #include <unordered_map>
 

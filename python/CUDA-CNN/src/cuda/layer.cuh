@@ -1,7 +1,7 @@
 #pragma once
 
-#include <storage.cuh>
-#include <utils.cuh>
+#include "storage.cuh"
+#include "utils.cuh"
 
 #include <memory>
 #include <vector>
@@ -24,8 +24,8 @@ class Layer {
             return next_layer;
         }
 
-        virtual void forward() { throw std::runtime_error('not implement error'); };
-        virtual void backward() { throw std::runtime_error('not implement error'); };
+        virtual void forward() { throw std::runtime_error("not implement error"); };
+  virtual void backward() { throw std::runtime_error("not implement error"); };
         
         virtual std::vector<std::pair<Storage *, Storage *>> parameters() {
             throw std::runtime_error("not implement error");
@@ -40,4 +40,4 @@ class Layer {
 
         std::unique_ptr<Storage> grad;
         std::unique_ptr<Storage> output;
-}
+};
