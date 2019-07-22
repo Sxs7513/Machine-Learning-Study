@@ -122,7 +122,7 @@ void operator_sum(const Storage *input1, int dim, Storage *outputs) {
 
     int dim_stride = 1;
     for (int i = dim + 1; i < input1_dims; i++) {
-        dim_stride *= input->get_shape()[i];
+        dim_stride *= input1->get_shape()[i];
     }
 
     int size = input1->get_data().size() / input1->get_shape()[dim];
