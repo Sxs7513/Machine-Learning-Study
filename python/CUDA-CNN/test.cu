@@ -28,13 +28,13 @@ __global__ void MatrixMulKernle(int m, int n, int k, float *A,float  *B, float *
 		//将A,B矩阵瓦片化的结果放入shared memory中，每个线程加载相应于C元素的A/B矩阵元素
 		if (Row < m && t * TILE_WIDTH + tx < n)		//越界处理，满足任意大小的矩阵相乘（可选）
 			//ds_A[tx][ty] = A[t*TILE_WIDTH + tx][Row];
-		    ds_A[tx][ty] = A[Row*n+t*TILE_WIDTH+tx];//以合并的方式加载瓦片
+		    ds_A[tx][ty] = A[Row * n + t * TILE_WIDTH + tx];//以合并的方式加载瓦片
 		else
 			ds_A[tx][ty] = 0.0;
  
 		if (t * TILE_WIDTH + ty < n && Col < k)
 			//ds_B[tx][ty] = B[Col][t*TILE_WIDTH + ty];
-            ds_B[tx][ty] = B[(t*TILE_WIDTH + ty)*k+Col];
+            ds_B[tx][ty] = B[(t * TILE_WIDTH + ty) * k + Col];
 		else
 			ds_B[tx][ty] = 0.0;	
  

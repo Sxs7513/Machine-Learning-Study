@@ -9,8 +9,35 @@
 #include <cmath>
 
 
-void operator_conv_bias(const Storage *inputs, const Storage *bias,
-                        Storage *output) {
+void operator_d_conv_bias(
+    const Storage *outputs_grad, Storage *bias_grad,
+    std::unordered_map<std::string, std::unique_ptr<Storage>> &temp) {
+    
+    int batch_size = outputs_grad->get_shape()[0];
+    int channels = outputs_grad->get_shape()[1];
+    int height = outputs_grad->get_shape()[2];
+
+    std::vector<int> sum3_shape{batch_size, channels, height};
+    INIT_TEMP(temp, "sum3", sum3_shape);
+    
+}
+
+__global__ void operator_conv_bias_h(const float *inputs, const float *bias,
+                                     float *output, int channel_size,
+                                     int channel_stride, int size) {
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (index < size) {
+        // bias dont have batch-dim
+        // index => bCHW + cHW + hW + w
+        // index / H / W % C
+        int col = (index / channel_stride) % channel_size;
+        output[index] = inputs[index] + bias[col];
+    }
+}
+
+
+void operator_conv_bias(const Storage *inputs, const Storage *bias, Storage *output) {
     CHECK_EQ(bias->get_data().size(), *(inputs->get_shape().begin() + 1),
            "operator_conv_bias: size error");
     
@@ -23,7 +50,11 @@ void operator_conv_bias(const Storage *inputs, const Storage *bias,
     int width = *(inputs->get_shape().rbegin());
 
     int size = inputs->get_data().size();
-
+    int grid_size = ceil(float(size) / BLOCK_SIZE);
+    operator_conv_bias_h<<<grid_size, BLOCK_SIZE>>>(
+        inputs_ptr, bias_ptr, output_ptr, channel_in, height * width, size
+    );
+    CUDA_POST_KERNEL_CHECK;
 }
 
 
@@ -123,7 +154,10 @@ void operator_conv(const Storage *inputs, Storage *filters, Storage *cols,
          pad_h, pad_w, stride_h, stride_w, cols_ptr);
     
     filters->reshape({ channel_out, channel_in * kernel_h * kernel_w });
-    
+    // filters is same in different batch, and it do not has batch-dim
+    // so only boardcast cols 
+    operator_matmul(filters, cols, output, 1);
+    filters->reshape({channel_out, channel_in, kernel_h, kernel_w});
 }
 
 
@@ -196,8 +230,21 @@ void Conv::forward() {
         pad_h, pad_w, stride_h, stride_w, this->output.get()        
     );
 
-    if (this->is_bias) {
-
+    if (this->bias) {
+        operator_conv_bias(this->output.get(), this->bias.get(), this->output.get());
     }
+}
 
+void Conv::backward() {
+    const Storage *input = this->pre->get_output();
+    Storage *output_grad = this->next->get_grad();
+
+    int height_out = (height + 2 * pad_h - kernel_h) / stride_h + 1;
+    int width_out = (width + 2 * pad_w - kernel_w) / stride_w + 1;
+
+    INIT_STORAGE(this->grad, input->get_shape());
+
+    if (this->bias) {
+        operator_d_conv_bias(output_grad, this->bias_grad.get(), this->temp)
+    }
 }
