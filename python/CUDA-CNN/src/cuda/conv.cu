@@ -9,6 +9,99 @@
 #include <cmath>
 
 
+
+void col2im(const float *data_col, const int batch_size, const int channels,
+            const int height, const int width, const int kernel_h,
+            const int kernel_w, const int pad_h, const int pad_w,
+            const int stride_h, const int stride_w, float *data_im) {
+
+    int height_col = height + 2 * pad_h - kernel_h / stride_h + 1;
+    int width_col = width + 2 * pad_w - kernel_w / stride_w + 1;
+    int size = channels * height * width;
+
+    int im_stride = channels * height * width;
+    int col_stride = channels * kernel_h * kernel_w * height_col * width_col;
+    dim3 dim_grid(ceil((float)size / BLOCK_SIZE), batch_size);
+
+    col2im_h<<<dim_grid, BLOCK_SIZE>>>(size, data_col, height, width, channels,
+                                     kernel_h, kernel_w, pad_h, pad_w, stride_h,
+                                     stride_w, height_col, width_col, data_im,
+                                     im_stride, col_stride);
+    CUDA_POST_KERNEL_CHECK;
+}
+
+void operator_d_conv(
+    Storage *outputs_grad, const Storage *inputs, const Storage *cols,
+    Storage *filters, const int pad_h, const int pad_w, const int stride_h,
+    const int stride_w, Storage *filters_grad, Storage *inputs_grad,
+    std::unordered_map<std::string, std::unique_ptr<Storage>> &temp) {
+    
+    CHECK_EQ(outputs_grad->get_shape().size(), 4,
+           "operator_d_conv: outputs_grad shape error");
+    CHECK_EQ(inputs->get_shape().size(), 4,
+           "operator_d_conv: inputs shape error");
+    CHECK_EQ(cols->get_shape().size(), 3, "operator_d_conv: cols shape error");
+    CHECK_EQ(filters->get_shape().size(), 4,
+           "operator_d_conv: filters shape error");
+
+    int batch_size = *(inputs->get_shape().rbegin() + 3);
+    int channel_in = *(inputs->get_shape().rbegin() + 2);
+    int height = *(inputs->get_shape().rbegin() + 1);
+    int width = *(inputs->get_shape().rbegin());
+
+    int channel_out = *(filters->get_shape().rbegin() + 3);
+    int kernel_h = *(filters->get_shape().rbegin() + 1);
+    int kernel_w = *(filters->get_shape().rbegin());
+
+    CHECK_EQ(*(filters->get_shape().rbegin() + 2), channel_in,
+           "operator_d_conv: channel size error");
+
+    int height_col = (height + 2 * pad_h - kernel_h) / stride_h + 1;
+    int width_col = (width + 2 * pad_w - kernel_w) / stride_w + 1;
+
+    // dL/dY reshape
+    outputs_grad->reshape({ batch_size, channel_out, height_col * width_col });
+
+    // col^T
+    std::vector<int> cols_t_shape(
+        { batch_size, height_col * width_col, channel_in * kernel_h * kernel_w }
+    );
+    INIT_TEMP(temp, "cols_t", cols_t_shape);
+    operator_transpose(cols, temp["cols_t"].get());
+    
+    // dL/dF = dL/dY * col^T
+    std::vector<int> dl_df_shape({ batch_size, channel_out, channel_in * kernel_h * kernel_w });
+    INIT_TEMP(temp, "dl_df", dl_df_shape);
+    operator_matmul(outputs_grad, temp["cols_t"].get(), temp["dl_df"].get());
+    operator_sum(temp["dl_df"].get(), 0, filters_grad);
+
+    // F^T
+    std::vector<int> filters_t_shape{channel_in * kernel_h * kernel_w,
+                                    channel_out};
+    INIT_TEMP(temp, "filters_t", filters_t_shape);
+    filters->reshape(
+        {channel_out, channel_in * kernel_h * kernel_w});
+    operator_transpose(filters, temp["filters_t"].get());
+    filters->reshape(
+        {channel_out, channel_in, kernel_h, kernel_w});
+
+    // dL/d_col = F^T * dL/dY
+    std::vector<int> dl_dcol_shape{batch_size, channel_in * kernel_h * kernel_w,
+                                 height_col * width_col};
+    INIT_TEMP(temp, "dl_dcol", dl_dcol_shape);
+    operator_matmul(temp["filters_t"].get(), outputs_grad, temp["dl_dcol"].get(), 1);
+
+    // dL/dY recover
+    outputs_grad->reshape({batch_size, channel_out, height_col, width_col});
+
+    // dL/d_im = col2im(dL/d_col)
+    float *dl_dcol_ptr = RAW_PTR(temp["dl_dcol"].get()->get_data());
+    float *inputs_grad_ptr = RAW_PTR(inputs_grad->get_data());
+    col2im(dl_dcol_ptr, batch_size, channel_in, height, width, kernel_h, kernel_w,
+            pad_h, pad_w, stride_h, stride_w, inputs_grad_ptr);
+}
+
+
 void operator_d_conv_bias(
     const Storage *outputs_grad, Storage *bias_grad,
     std::unordered_map<std::string, std::unique_ptr<Storage>> &temp) {
@@ -17,9 +110,18 @@ void operator_d_conv_bias(
     int channels = outputs_grad->get_shape()[1];
     int height = outputs_grad->get_shape()[2];
 
+    // reduce W
     std::vector<int> sum3_shape{batch_size, channels, height};
     INIT_TEMP(temp, "sum3", sum3_shape);
+    operator_sum(outputs_grad, 3, temp["sum3"].get());
+
+    // reduce H
+    std::vector<int> sum2_shape({ batch_size, channels });
+    INIT_TEMP(temp, "sum2", sum2_shape);
+    operator_sum(temp["sum3"].get(), 2, temp["sum2"].get());
     
+    // reduce N
+    operator_sum(temp["sum2"].get(), 0, bias_grad);
 }
 
 __global__ void operator_conv_bias_h(const float *inputs, const float *bias,
@@ -247,4 +349,6 @@ void Conv::backward() {
     if (this->bias) {
         operator_d_conv_bias(output_grad, this->bias_grad.get(), this->temp)
     }
+
+
 }
