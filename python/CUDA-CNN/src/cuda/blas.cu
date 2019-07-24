@@ -127,7 +127,7 @@ __global__ void operator_sum_h(const float *input1, float *output,
 
         // if the sum dim is not the last dim, loc has to be correction
         // because it has to match input1_shape.size()
-        for (i = input_dims - 1; i > dim; i--) {
+        for (int i = input1_dims - 1; i > dim; i--) {
             loc[i] = loc[i - 1];
         }
 
@@ -200,7 +200,7 @@ __global__ void operator_transpose_h(const float *in, float *out, int height,
         __syncthreads();
 
         // it is only transpose
-        out[col * height + row] = tile[tx][ty]
+        out[col * height + row] = tile[tx][ty];
     }
 }
 

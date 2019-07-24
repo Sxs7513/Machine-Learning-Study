@@ -1,4 +1,5 @@
 #include "conv.cuh"
+#include "blas.cu"
 
 #include <thrust/copy.h>
 #include <thrust/device_vector.h>
@@ -9,6 +10,9 @@
 #include <cmath>
 
 
+void col2im_h() {
+    
+}
 
 void col2im(const float *data_col, const int batch_size, const int channels,
             const int height, const int width, const int kernel_h,
@@ -347,7 +351,7 @@ void Conv::backward() {
     INIT_STORAGE(this->grad, input->get_shape());
 
     if (this->bias) {
-        operator_d_conv_bias(output_grad, this->bias_grad.get(), this->temp)
+        operator_d_conv_bias(output_grad, this->bias_grad.get(), this->temp);
     }
 
 
